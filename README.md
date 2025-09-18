@@ -108,6 +108,8 @@ Add to GitHub Actions, GitLab CI, or pre-commit hooks:
 
 ```bash
 ./clean-bom-senior.sh --dry-run   # Enforce before merge
+```
+```bash
 ./clean-bom-senior.sh             # Cleanup step before deploy
 ```
 
