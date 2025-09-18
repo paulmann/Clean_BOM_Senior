@@ -1,4 +1,4 @@
-#!/bin/dash
+#!/bin/sh
 # A secure, atomic, and robust BOM/CRLF batch cleaner for PHP, HTML, CSS, JS, and text files - engineered for modern, team-based development with CI/CD and pre-commit support.
 # Author: Mikhail Deynekin (mid1977@gmail.com)
 # Website: https://deynekin.com
