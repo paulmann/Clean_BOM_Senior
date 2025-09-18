@@ -1,5 +1,8 @@
 ```markdown
 # clean-bom-senior.sh
+# Clean BOM Senior
+
+Removes invisible UTF-8 BOM and CRLF from PHP, CSS, JS, TXT, XML, HTM, and HTML files. Prevents fatal PHP errors with namespace/declare. Atomic, safe, and CI-friendly: only changes files if needed and preserves timestamps. Ideal for cross-platform teams. 
 
 **A secure, atomic, and robust BOM/CRLF batch cleaner for PHP, HTML, CSS, JS, and text files – engineered for modern, team-based development with CI/CD and pre-commit support.**
 
