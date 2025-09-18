@@ -1,11 +1,10 @@
-```bash
-# clean-bom-senior.sh
-# Clean BOM Senior
+## Clean BOM Senior ( clean-bom-senior.sh )
+
 # Removes invisible UTF-8 BOM and Windows CRLF from PHP, CSS, JS, TXT, XML, HTM, and HTML files.
 # Prevents fatal PHP errors when namespace or declare(strict_types=1) must be first.
 # Atomic, safe, CI/CD-friendly: only alters files if needed and preserves timestamps.
 # Engineered for modern, cross-platform teams.
-```
+
 
 ## What is This Project?
 
