@@ -30,6 +30,50 @@ chmod +x clean-bom-senior.sh
 ./clean-bom-senior.sh file1.php file2.js config.xml
 ```
 
+## 📋 Table of Contents
+
+- [🚨 Why Clean BOM Senior?](#-why-clean-bom-senior)
+  - [The Hidden Problem](#the-hidden-problem)
+  - [Real-World Impact](#real-world-impact)
+- [✨ Key Features](#-key-features)
+  - [🛡️ Enterprise-Grade Safety](#️-enterprise-grade-safety)
+  - [🎯 Intelligent Processing](#-intelligent-processing)
+  - [📊 Comprehensive Reporting](#-comprehensive-reporting)
+  - [🔄 DevOps Integration](#-devops-integration)
+- [📋 Installation & Usage](#-installation--usage)
+  - [System Requirements](#system-requirements)
+  - [Installation Options](#installation-options)
+  - [Command Line Options](#command-line-options)
+  - [Usage Examples](#usage-examples)
+- [🏗️ Advanced Features](#️-advanced-features)
+  - [File Preservation Guarantees](#file-preservation-guarantees)
+  - [Comprehensive Statistics](#comprehensive-statistics)
+  - [Supported File Types](#supported-file-types)
+  - [Error Handling](#error-handling)
+- [🔗 DevOps Integration](#-devops-integration-1)
+  - [CI/CD Pipeline Integration](#cicd-pipeline-integration)
+  - [Git Hooks](#git-hooks)
+  - [Docker Integration](#docker-integration)
+- [🏢 Team & Enterprise Usage](#-team--enterprise-usage)
+  - [Project Setup](#project-setup)
+  - [Team Workflow](#team-workflow)
+  - [IDE Integration](#ide-integration)
+- [🔍 Troubleshooting](#-troubleshooting)
+  - [Common Issues](#common-issues)
+  - [Debugging Commands](#debugging-commands)
+  - [Recovery Procedures](#recovery-procedures)
+- [🤝 Contributing](#-contributing)
+  - [Development Setup](#development-setup)
+  - [Contribution Guidelines](#contribution-guidelines)
+  - [Code Standards](#code-standards)
+- [📄 License](#-license)
+- [👨‍💻 Author & Support](#-author--support)
+  - [Getting Help](#getting-help)
+  - [Related Projects](#related-projects)
+- [🎯 Roadmap](#-roadmap)
+  - [Upcoming Features](#upcoming-features)
+  - [Version History](#version-history)
+
 ## 🚨 Why Clean BOM Senior?
 
 ### The Hidden Problem
