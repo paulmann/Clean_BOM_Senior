@@ -1,6 +1,6 @@
 # Clean BOM Senior 🧹✨
 
-[![Version](https://img.shields.io/badge/version-2.06.4-blue.svg)](https://github.com/paulmann/Clean_BOM_Senior)
+[![Version](https://img.shields.io/badge/version-2.07.0-blue.svg)](https://github.com/paulmann/Clean_BOM_Senior)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-bash-orange.svg)](https://www.gnu.org/software/bash/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Unix-lightgrey.svg)]()
@@ -28,6 +28,15 @@ chmod +x clean-bom-senior.sh
 
 # Clean specific files
 ./clean-bom-senior.sh file1.php file2.js config.xml
+
+# Disable BOM removal (only normalize CRLF)
+./clean-bom-senior.sh --no-bom-clear
+
+# Disable CRLF normalization (only remove BOM signatures)
+./clean-bom-senior.sh --no-rn-normalize
+
+# Preview with selective cleaning actions
+./clean-bom-senior.sh --dry-run --no-bom-clear --verbose
 ```
 
 ## 📋 Table of Contents
@@ -173,14 +182,18 @@ source ~/.bashrc
 bom --verbose
 ```
 
-### Command Line Options
 
-| Option | Description |
-|--------|-------------|
-| `-h, --help` | Show comprehensive help message and exit |
-| `-v, --verbose` | Enable detailed output and processing logs |
-| `-n, --dry-run` | Preview mode - show what would be processed without making changes |
-| `-V, --version` | Display script version and author information |
+### Command-Line Options
+
+| Option                  | Description                                    |
+|-------------------------|------------------------------------------------|
+| `-h, --help`            | Show help message and exit                     |
+| `-v, --verbose`         | Enable detailed output                         |
+| `-n, --dry-run`         | Preview mode: show what would change           |
+| `-V, --version`         | Show script version info                       |
+| `--no-bom-clear`        | **NEW**: Do not remove BOM                     |
+| `--no-rn-normalize`     | **NEW**: Do not normalize CRLF (`\r\n`) lines  |
+
 
 ### Usage Examples
 
@@ -194,6 +207,18 @@ bom --verbose
 
 # Preview changes without modifying files
 ./clean-bom-senior.sh --dry-run
+
+# Disable BOM removal (keep BOM, fix CRLF)
+./clean-bom-senior.sh --no-bom-clear
+
+# Disable CRLF normalization (keep CRLF, remove BOM)
+./clean-bom-senior.sh --no-rn-normalize
+
+# Both options
+./clean-bom-senior.sh --no-bom-clear --no-rn-normalize
+
+# Dry run shows what "would" (or "would not") be done under current flags
+./clean-bom-senior.sh --dry-run --no-bom-clear
 ```
 
 #### Specific Files
@@ -271,6 +296,7 @@ CRLF line endings fixed: 8
 | `.js` | JavaScript | BOM may break modules/imports |
 | `.txt` | Text files | Mixed line endings |
 | `.xml` | XML documents | BOM affects XML parsing |
+| `.sh` | XML documents | BOM affects XML parsing |
 | `.htm/.html` | Web pages | Encoding display issues |
 
 ### Error Handling
@@ -572,6 +598,12 @@ copies or substantial portions of the Software.
 
 ### Version History
 
+- **v2.07.0** (2025-09-30):  
+  - Added `--no-bom-clear` and `--no-rn-normalize` CLI flags for selective disabling of BOM and CRLF operations  
+  - Fixed variable leakage in `while read` loops (uses process substitution consistently)  
+  - Enhanced dry-run output to reflect disabled operations  
+  - Improved argument parsing and help text  
+  - Minor refactoring for code clarity/maintainability
 - **v2.06.4** (2025-09-28): Fixed statistics reporting, improved process substitution
 - **v2.06.3** (2025-09-28): Resolved unbound variable issues, enhanced error handling
 - **v2.06.2** (2025-09-28): Added file attribute preservation, global command support
