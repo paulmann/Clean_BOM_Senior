@@ -11,33 +11,84 @@ Clean BOM Senior is a robust, enterprise-grade bash script designed to detect an
 
 ## ⚡ Quick Start
 
+**Yes, both will be executable.** The install chain handles it automatically:
+- `clean-bom-senior.sh` — gets `chmod +x` applied if missing
+- `bom` — symlink inherits the executable bit from its target; no separate `chmod` needed
+
+***
+
+
+## Installation
+
 ```bash
-# Clone and install
+# Clone the repository
 git clone https://github.com/paulmann/Clean_BOM_Senior.git
 cd Clean_BOM_Senior
-chmod +x clean-bom-senior.sh
 
-# Clean all files recursively
-./clean-bom-senior.sh
-
-# Preview what would be cleaned (dry run)
-./clean-bom-senior.sh --dry-run
-
-# Verbose mode with detailed logging
-./clean-bom-senior.sh --verbose
-
-# Clean specific files
-./clean-bom-senior.sh file1.php file2.js config.xml
-
-# Disable BOM removal (only normalize CRLF)
-./clean-bom-senior.sh --no-bom-clear
-
-# Disable CRLF normalization (only remove BOM signatures)
-./clean-bom-senior.sh --no-rn-normalize
-
-# Preview with selective cleaning actions
-./clean-bom-senior.sh --dry-run --no-bom-clear --verbose
+# Install globally as `bom` — resolves absolute path, ensures executable bit, creates symlink
+src="$(readlink -f ./clean-bom-senior.sh 2>/dev/null || realpath ./clean-bom-senior.sh 2>/dev/null)" \
+  && [ -f "$src" ] \
+  && { [ -x "$src" ] || chmod +x "$src"; } \
+  && sudo ln -sf "$src" /usr/local/bin/bom \
+  && echo "✅ Installed: $(which bom) → $src"
 ```
+
+> The install command automatically resolves the absolute path, grants the executable
+> bit to the source script if missing, and creates the `/usr/local/bin/bom` symlink.
+> Since a symlink inherits permissions from its target, both `clean-bom-senior.sh`
+> and `bom` will be executable upon completion.
+
+## Verify Installation
+
+```bash
+which bom               # → /usr/local/bin/bom
+ls -la $(which bom)     # → lrwxrwxrwx ... /usr/local/bin/bom -> /path/to/clean-bom-senior.sh
+```
+
+## Usage
+
+```bash
+# Recursively clean all files in the current directory
+bom
+
+# Dry run — preview changes without modifying any files
+bom --dry-run
+
+# Verbose — print detailed per-file processing log
+bom --verbose
+
+# Target specific files
+bom file1.php file2.js config.xml
+
+# Remove BOM signatures only — skip CRLF normalization
+bom --no-rn-normalize
+
+# Normalize CRLF line endings only — skip BOM removal
+bom --no-bom-clear
+
+# Dry run with verbose output, skipping BOM removal
+bom --dry-run --no-bom-clear --verbose
+```
+
+## Uninstall
+
+```bash
+sudo rm /usr/local/bin/bom && echo "✅ bom removed from PATH"
+```
+
+***
+
+### What the install chain does, step by step
+
+| Step | Command fragment | Effect |
+|------|-----------------|--------|
+| 1 | `readlink -f \|\| realpath` | Resolves the absolute path (cross-distro fallback) |
+| 2 | `[ -f "$src" ]` | Aborts if the file does not exist |
+| 3 | `[ -x "$src" ] \|\| chmod +x` | Grants executable bit if not already set |
+| 4 | `sudo ln -sf` | Creates (or replaces) the global symlink |
+| 5 | Symlink inheritance | `bom` is executable automatically — no extra `chmod` needed |
+
+
 
 ## 📋 Table of Contents
 
