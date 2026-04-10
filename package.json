@@ -1,0 +1,57 @@
+{
+  "name": "clean-bom-senior",
+  "version": "2.7.0",
+  "description": "Enterprise-grade CLI utility to safely remove invisible UTF-8 BOM markers and normalize Windows CRLF line endings from source code files.",
+  "author": {
+    "name": "Mikhail Deynekin",
+    "email": "mid1977@gmail.com",
+    "url": "https://deynekin.com"
+  },
+  "license": "MIT",
+  "keywords": [
+    "bom",
+    "utf8",
+    "byte-order-mark",
+    "crlf",
+    "line-endings",
+    "encoding",
+    "php",
+    "bash",
+    "cli",
+    "devtools",
+    "devops",
+    "clean",
+    "formatter",
+    "linter",
+    "git-hooks",
+    "ci-cd"
+  ],
+  "homepage": "https://github.com/paulmann/Clean_BOM_Senior#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmann/Clean_BOM_Senior.git"
+  },
+  "bugs": {
+    "url": "https://github.com/paulmann/Clean_BOM_Senior/issues"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "bin": {
+    "bom": "./bin/bom.js",
+    "clean-bom-senior": "./bin/bom.js"
+  },
+  "files": [
+    "bin/",
+    "clean-bom-senior.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node bin/postinstall.js"
+  }
+}

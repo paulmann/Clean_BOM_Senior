@@ -1,0 +1,24 @@
+# Development & CI artifacts
+.git/
+.github/
+.vscode/
+.idea/
+
+# Tests
+test/
+tests/
+*.test.sh
+test-suite.sh
+
+# Docs source (keep README.md and LICENSE in package)
+docs/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Misc
+*.bak.*
+*.log
