@@ -1,6 +1,8 @@
 # Clean BOM Senior 🧹✨
 
 [![Version](https://img.shields.io/badge/version-2.07.0-blue.svg)](https://github.com/paulmann/Clean_BOM_Senior)
+[![npm version](https://img.shields.io/npm/v/clean-bom-senior.svg?color=red)](https://www.npmjs.com/package/clean-bom-senior)
+[![npm downloads](https://img.shields.io/npm/dm/clean-bom-senior.svg?color=brightgreen)](https://www.npmjs.com/package/clean-bom-senior)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-bash-orange.svg)](https://www.gnu.org/software/bash/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Unix-lightgrey.svg)]()
