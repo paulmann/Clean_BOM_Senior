@@ -20,6 +20,20 @@ Clean BOM Senior is a robust, enterprise-grade bash script designed to detect an
 
 ## Installation
 
+### Install via npm
+
+```bash
+# Install globally from npm
+npm install -g clean-bom-senior
+
+# Verify the CLI is available
+bom --help
+```
+
+The npm package installs the `bom` CLI globally and runs a post-install step to ensure the bundled shell script is executable on supported systems.
+
+### Install from source
+
 ```bash
 # Clone the repository
 git clone https://github.com/paulmann/Clean_BOM_Senior.git
