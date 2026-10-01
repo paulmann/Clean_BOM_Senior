@@ -17,6 +17,8 @@
     "encoding",
     "php",
     "bash",
+    "powershell",
+    "windows",
     "cli",
     "devtools",
     "devops",
@@ -48,6 +50,7 @@
   "files": [
     "bin/",
     "clean-bom-senior.sh",
+    "clean-bom-senior.ps1",
     "README.md",
     "LICENSE"
   ],
