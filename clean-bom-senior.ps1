@@ -734,12 +734,17 @@ function Invoke-CleanFile {
     }
 
     $lastWriteTimeUtc = (Get-Item -LiteralPath $Path -Force).LastWriteTimeUtc
+    # .NET resolves a relative path against the *process* working directory, while
+    # Get-Item and Test-Path resolve it against the PowerShell provider location.
+    # With a relative file argument those two can disagree, so the path is
+    # anchored once, here, before any [System.IO] call uses it.
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
 
-    $backupPath = "$Path.bak.$($script:ScriptPid)"
+    $backupPath = "$fullPath.bak.$($script:ScriptPid)"
     $tempPath = Join-Path $script:TempDirectory "$($script:ScriptName).$($script:ScriptPid).$([Guid]::NewGuid().ToString('N'))"
 
     try {
-        [System.IO.File]::Copy($Path, $backupPath, $true)
+        [System.IO.File]::Copy($fullPath, $backupPath, $true)
     }
     catch {
         Write-Log -Level ERROR -Message "Failed to create backup: $Path"
@@ -763,11 +768,11 @@ function Invoke-CleanFile {
     try {
         # Atomic replacement: the destination keeps the temp file's data but the
         # original's identity is restored immediately afterwards.
-        [System.IO.File]::Move($tempPath, $Path, $true)
+        [System.IO.File]::Move($tempPath, $fullPath, $true)
     }
     catch {
         try {
-            if (Test-Path -LiteralPath $backupPath) { [System.IO.File]::Copy($backupPath, $Path, $true) }
+            if (Test-Path -LiteralPath $backupPath) { [System.IO.File]::Copy($backupPath, $fullPath, $true) }
         }
         catch {
             Write-Log -Level WARN -Message "Rollback failed for: $Path"
@@ -1110,6 +1115,27 @@ function Invoke-Main {
 
     Show-Statistics
     return $exitCode
+}
+
+# System.IO and the process working directory
+
+# The argument list is resolved against the *process* working directory, not the
+# PowerShell provider location. `Set-Location` alone is not enough: [System.IO] would
+# resolve a relative file argument against the directory the host started in and
+# report "Cannot read file" for a file that exists. Measured: with the location set
+# to a sandbox and the process directory left at the caller's, an explicit relative
+# argument failed while `Get-Item -LiteralPath` succeeded. Aligning the process
+# directory with the location removes the mixed state; when the host sits elsewhere
+# on purpose, the location is left alone.
+try {
+    $providerLocation = (Get-Location -ErrorAction Stop).Path
+    if ($providerLocation -and [System.IO.Directory]::Exists($providerLocation) -and
+        ([System.IO.Path]::GetFullPath($providerLocation) -ne [System.IO.Path]::GetFullPath([System.IO.Directory]::GetCurrentDirectory()))) {
+        [System.IO.Directory]::SetCurrentDirectory($providerLocation)
+    }
+}
+catch {
+    # A non-filesystem provider location is not an error worth failing over.
 }
 
 # `exit (Invoke-Main ...)` would lose the help and version text: a function that
