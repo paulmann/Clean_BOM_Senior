@@ -12,11 +12,14 @@
 
 Clean BOM Senior detects and removes invisible UTF-8 Byte Order Marks (BOM) and Windows CRLF line endings that cause critical errors in PHP, JavaScript, CSS and other source code files.
 
-It ships as **two implementations of one contract**: a POSIX shell script for Linux, macOS and Unix (also the npm CLI), and a PowerShell 7.6 port for Windows hosts without Git Bash. Same flags, same detection rules, same output, same exit codes — verified byte for byte by a differential test.
+It ships as **three implementations of one contract**: a POSIX shell script for Linux, macOS
+and Unix (also the npm CLI), a PowerShell 7.6 port for Windows hosts without Git Bash, and a
+batch port for hosts without PowerShell either. Same flags, same detection rules, same
+output, same exit codes — verified byte for byte by differential tests.
 
 ---
 
-## ⚡ Two Implementations, One Contract
+## ⚡ Three Implementations, One Contract
 
 | | `clean-bom-senior.sh` | `clean-bom-senior.ps1` |
 |---|---|---|
@@ -210,7 +213,7 @@ npm uninstall -g clean-bom-senior                        # if it came from npm
 
 ## 📋 Table of Contents
 
-- [⚡ Two Implementations, One Contract](#-two-implementations-one-contract)
+- [⚡ Three Implementations, One Contract](#-three-implementations-one-contract)
 - [🚨 Why Clean BOM Senior?](#-why-clean-bom-senior)
   - [The Hidden Problem](#the-hidden-problem)
   - [Real-World Impact](#real-world-impact)
@@ -237,6 +240,10 @@ npm uninstall -g clean-bom-senior                        # if it came from npm
   - [Deliberate Divergences from the Shell Original](#deliberate-divergences-from-the-shell-original)
   - [Verifying Parity](#-verifying-parity)
   - [Windows Automation](#-windows-automation)
+- [🪟 Batch Port (cmd.exe)](#-batch-port-cmdexe)
+  - [Why certutil](#why-certutil)
+  - [Batch Port Divergences](#batch-port-divergences)
+  - [Verifying the Batch Port](#verifying-the-batch-port)
 - [🏗️ Advanced Features](#️-advanced-features)
   - [File Preservation Guarantees](#file-preservation-guarantees)
   - [Comprehensive Statistics](#comprehensive-statistics-1)
@@ -470,6 +477,9 @@ PowerShell-style spellings of the same flags — see
 > the directory instead, or list the files explicitly.
 
 ## 🐚 PowerShell 7.6 Port
+
+> A third implementation exists for hosts without PowerShell and without Git Bash: see
+> [Batch Port (cmd.exe)](#-batch-port-cmdexe).
 
 ### Why a Second Implementation
 
@@ -786,6 +796,84 @@ behind, and no relative-path invocation produced a spurious access error. Any ot
 exits `1`, prints the file-level difference (hexadecimal, for small files) and dumps the tail
 of both runs.
 
+### CLI Contract Test
+
+The byte comparison above does not say anything about argument parsing, binary detection or
+the shape of paths in the log. `tests/cli-contract.ps1` covers those three, each of them a
+defect found in the audit of 2026-10-05:
+
+| Case | Expected | Was |
+|---|---|---|
+| `clean-bom-senior.ps1 -` | `Unknown option: -`, exit 2 | `File not found: -`, exit 0 |
+| NUL byte past the first 8 KB | skipped, reported with its offset, file untouched | missed, file rewritten |
+| recursive log path | `./name`, as the reference prints it | absolute Windows path |
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File .\tests\cli-contract.ps1
+# assertions checked: 15   failures: 0
+```
+
+## 🪟 Batch Port (cmd.exe)
+
+`clean-bom-senior.bat` is the third implementation of the same contract, for Windows hosts
+without PowerShell and without Git Bash. Same flags, same detection window, same report, same
+exit codes; the file bytes are identical to the PowerShell port and to the shell original.
+
+```bat
+clean-bom-senior.bat                             Process all files recursively
+clean-bom-senior.bat --dry-run                   Preview mode (no file changes)
+clean-bom-senior.bat file1.php file2.js          Process specific files only
+clean-bom-senior.bat --no-bom-clear              Skip BOM removal
+clean-bom-senior.bat --no-rn-normalize           Skip CRLF normalization
+```
+
+The full design record — the hexadecimal filter, the `cmd` traps it works around, and every
+divergence with its measurement — is in `docs/BAT-PORT.md`.
+
+### Why certutil
+
+`cmd.exe` has no byte-oriented I/O: `set`, `for /f`, `echo` and redirection all work on text
+and rewrite line endings on the way through. BOM removal and CRLF normalisation are byte
+operations, so this port performs them on a hexadecimal rendering:
+
+```bat
+certutil -encodehex -f <file> <hex> 4     rem  "ef bb bf 3c 3f ...", 16 values per line
+certutil -decodehex      <hex> <file> 4   rem  the same format, no header
+```
+
+Both directions were verified byte for byte, including a short last line. The filter that
+runs on that hex text reproduces `sed -e 's/\r$//' -e '1s/^\xef\xbb\xbf//'` and was
+calibrated against the PowerShell port on a CR at every offset relative to the 16-byte
+boundary of the dump.
+
+### Batch Port Divergences
+
+| # | Area | Behaviour |
+|---|---|---|
+| 1 | Help text | ASCII only; the reference's UTF-8 bullets depend on the console code page. File *content* is unaffected — it never passes through the code page |
+| 2 | Modification time | restored through PowerShell when available; otherwise not restored, and the greeting says so |
+| 3 | Paths with `!` | not supported: command extensions expand it inside the delayed-expansion blocks the script needs |
+| 4 | Performance | about one second per 100 KB; meant for source trees, not multi-megabyte files |
+| 5 | NUL byte offset | reported as the dump line number, not a byte offset |
+| 6 | Timestamp format | the locale's own date string |
+| 7 | Binary files | reported and skipped, as in the PowerShell port; the reference rewrites them |
+
+Divergences 1, 5 and 6 come from what `cmd` can express; 2 and 3 are hard limits of the
+shell, stated rather than hidden; 7 is the same safety decision the PowerShell port makes.
+
+### Verifying the Batch Port
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -File .\tests\bat-differential.ps1
+```
+
+One fixture set built from raw bytes, three copies, three implementations. Expected:
+`identical: 15 / 15 compared`, `leftover backups in the batch tree: 0`, `batch parity
+verified: identical bytes against the PowerShell port`, exit code 0. The `.bat` result is
+compared with the PowerShell port always, and with the shell original when Git Bash is
+present; when it is absent the test says so explicitly instead of passing silently. The NUL
+fixture is asserted as a documented divergence rather than compared.
+
 Covered cases: BOM only; BOM + CRLF; CRLF without BOM; already clean file (must not be
 rewritten); empty file; file consisting of a single BOM; mixed endings; lone CR inside a
 line; CR at end of file; file without a trailing newline; unsupported extension;
@@ -809,6 +897,26 @@ modified by a test run.
 
 #### Pre-commit hook (Windows, no Git Bash)
 
+Include both ports in the npm package. The package manifest already lists
+`clean-bom-senior.ps1`; the batch port is shipped the same way:
+
+```json
+{
+  "files": [
+    "bin/",
+    "clean-bom-senior.sh",
+    "clean-bom-senior.ps1",
+    "clean-bom-senior.bat",
+    "README.md",
+    "LICENSE"
+  ]
+}
+```
+
+`os` currently limits installation to `linux` and `darwin`, so a Windows install would be
+refused by npm even though the package carries the Windows implementations. That gate is a
+project decision, not an oversight — see `AGENTS.md` section 9.1.
+
 ```powershell
 # .git\hooks\pre-commit  →  invoked through Git's own shell; wrap it in PowerShell:
 #   pwsh -NoLogo -NoProfile -NonInteractive -File tools\check-bom.ps1
@@ -820,6 +928,19 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Host 'No BOM/CRLF issues detected'
+```
+
+Without PowerShell at all, the pre-commit hook can call the batch port directly:
+
+```bat
+@echo off
+rem .git\hooks\pre-commit
+"%~dp0..\tools\clean-bom-senior.bat" --dry-run
+if errorlevel 1 (
+    >&2 echo BOM or CRLF issues found
+    exit /b 1
+)
+exit /b 0
 ```
 
 #### GitHub Actions (Windows runner)
@@ -1381,6 +1502,10 @@ copies or substantial portions of the Software.
 - **PowerShell port** (2026-10-02, unreleased):
   - `clean-bom-senior.ps1` — PowerShell 7.6 port of the v2.07.0 contract: BOM removal, CRLF normalization, POSIX-style flags with PowerShell aliases, identical log format and exit codes
   - `tests/differential.ps1` — parity test against the shell original on 17 raw-byte fixtures (14 compared, 2 excluded by construction, 1 asserted divergence); exits non-zero on any byte-level difference
+  - `tests/cli-contract.ps1` — CLI contract of the port on 15 assertions: argument parsing (including a bare `-`), NUL-byte detection beyond the first block, and the `./name` shape of log paths
+  - `tests/bat-differential.ps1` — parity of the batch port against the PowerShell port and the shell original on 15 raw-byte fixtures
+  - `docs/BAT-PORT.md` — design record of the batch port: the hexadecimal filter, the `cmd` traps, and every divergence with its measurement
+  - `docs/RAGRAF-REPORT.md` — code audit of 2026-10-05: defects found, fixes, and what the static index could and could not answer
   - Preserves the original modification time, ACL, attributes and creation time across a rewrite; skips binary (NUL-byte) files; prunes `.git`, `vendor`, `node_modules` and other third-party or generated trees
   - Exit code 3 is reached through .NET's validated temp path (see divergences)
 - **v2.07.0** (2025-09-30):  

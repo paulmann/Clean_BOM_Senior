@@ -1,0 +1,36 @@
+# Line endings, per file type — and for one file type this is load-bearing.
+#
+# cmd.exe refuses to run a .bat file whose lines end in LF alone. Measured on
+# Windows 10.0.26300: an LF-only batch file exits 255 with no output at all. This
+# is not a style preference, it is the difference between working and not running.
+#
+# The global Git configuration on this host is core.autocrlf=input, which only
+# rewrites files on the way INTO the index and never on checkout. Without the rule
+# below, a clone of this repository produces an LF-only clean-bom-senior.bat and
+# the batch port is broken for everyone. Verified before adding this file:
+#   git ls-files --eol clean-bom-senior.bat  ->  i/lf  w/crlf  attr/
+# and again after it:                              i/lf  w/crlf  attr/text eol=crlf
+
+# Batch files: always CRLF in the working tree, on every platform.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts: always LF, so a host with core.autocrlf=true cannot break them.
+*.sh text eol=lf
+*.bash text eol=lf
+
+# PowerShell and the project's own text files are edited and compared as LF. This
+# is what the tools themselves produce, and what the differential tests hash.
+*.ps1 text eol=lf
+*.psm1 text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Binary assets must never be normalised.
+*.png binary
+*.jpg binary
+*.ico binary
+*.zip binary

@@ -346,7 +346,14 @@ function Invoke-ArgumentParsing {
             # the caller's .Count would fail under StrictMode.
             return , $files
         }
-        elseif ($argument.StartsWith('-') -and $argument.Length -gt 1) {
+        elseif ($argument.Length -ge 1 -and $argument[0] -ceq '-') {
+            # A bare `-` is NOT a file name here: the shell original matches it
+            # with the `-*` pattern and exits 2 with "Unknown option: -".
+            # Measured before the fix: `-` and `--dry-run -` were both accepted
+            # and reported as "File not found: -" with exit 0, so a script that
+            # probes the CLI could not tell the two implementations apart.
+            # `-ceq` on the first character keeps the test case-sensitive, so a
+            # file argument that merely starts with '-' still parses normally.
             Write-Log -Level ERROR -Message "Unknown option: $argument"
             exit 2
         }
@@ -394,6 +401,33 @@ function Get-FileCategory {
     $extension = Get-FileExtensionLower -Path $Path
     if ($script:SupportedExtensions -contains $extension) { return $extension }
     return 'other'
+}
+
+function Format-DisplayPath {
+    <#
+    .SYNOPSIS
+        Path in the form the reference prints it: relative to the current
+        directory, prefixed with './' and using forward slashes.
+
+    .DESCRIPTION
+        The shell original runs `find .`, so every recursive path it logs is
+        './name'. The port collects absolute paths internally and used to log
+        them verbatim, which broke the "same output" part of the contract for
+        anyone diffing the two logs. Explicit file arguments are deliberately not
+        passed through here: the reference echoes those exactly as typed.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string] $Path)
+
+    try {
+        $relative = [System.IO.Path]::GetRelativePath((Get-Location).Path, $Path)
+        if ($relative.StartsWith('..')) { return $Path }
+        return './' + ($relative -replace '\\', '/')
+    }
+    catch {
+        return $Path
+    }
 }
 
 function Get-FileIssues {
@@ -482,22 +516,46 @@ function Test-UnsupportedForContents {
     [OutputType([bool])]
     param([Parameter(Mandatory)][string] $Path)
 
+    # One traversal answers "is this binary?" and "where is the first NUL?";
+    # Find-NulByteOffset owns the scan, this keeps the boolean contract.
+    return $null -ne (Find-NulByteOffset -Path $Path)
+}
+
+function Find-NulByteOffset {
+    <#
+    .SYNOPSIS
+        Offset of the first NUL byte, or $null when the file holds none.
+
+    .DESCRIPTION
+        Scans the entire file - not just its first block. A NUL byte past the
+        first 8192 bytes used to be missed and the file was then rewritten as if it
+        were text, which is exactly the corruption this exists to prevent.
+        Measured before the fix: BOM + 9000 text bytes + NUL + CRLF lost 4 bytes
+        (the BOM and both CRLF pairs) and came back as valid-looking text.
+
+        The file size limit is checked before this runs, so the buffer is the only
+        cost; 64 KB blocks keep it flat regardless of file size.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string] $Path)
+
     try {
         $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
     }
     catch {
-        return $false
+        return $null
     }
 
     try {
-        $buffer = [byte[]]::new(8192)
-        $read = $stream.Read($buffer, 0, $buffer.Length)
-        for ($i = 0; $i -lt $read; $i++) {
-            if ($buffer[$i] -eq 0x00) { return $true }
+        $buffer = [byte[]]::new(65536)
+        $offset = [long]0
+        while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            for ($i = 0; $i -lt $read; $i++) {
+                if ($buffer[$i] -eq 0x00) { return $offset + $i }
+            }
+            $offset += $read
         }
-        # An empty file (or one holding only a BOM) is text; emptiness is handled
-        # by the caller's size check.
-        return $false
+        return $null
     }
     finally {
         $stream.Dispose()
@@ -679,10 +737,19 @@ function Invoke-CleanFile {
     #>
     [CmdletBinding()]
     [OutputType([int])]
-    param([Parameter(Mandatory)][string] $Path)
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        # False for a file named on the command line: the reference echoes those
+        # verbatim, while everything found by its `find .` comes back as './name'.
+        [bool] $DisplayRelative = $true
+    )
+
+    # One display form for every log line about this file, built from the same
+    # rule the reference's `find .` output follows.
+    $displayPath = if ($DisplayRelative) { Format-DisplayPath -Path $Path } else { $Path }
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        Write-Log -Level ERROR -Message "Cannot read file: $Path"
+        Write-Log -Level ERROR -Message "Cannot read file: $displayPath"
         $script:ErrorTypes['access']++
         return 3
     }
@@ -691,13 +758,13 @@ function Invoke-CleanFile {
         $null = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite).Dispose()
     }
     catch {
-        Write-Log -Level ERROR -Message "Cannot read file: $Path"
+        Write-Log -Level ERROR -Message "Cannot read file: $displayPath"
         $script:ErrorTypes['access']++
         return 3
     }
 
     if (-not (Test-FileWritable -Path $Path)) {
-        Write-Log -Level ERROR -Message "Cannot write to file: $Path"
+        Write-Log -Level ERROR -Message "Cannot write to file: $displayPath"
         $script:ErrorTypes['access']++
         return 3
     }
@@ -705,30 +772,36 @@ function Invoke-CleanFile {
     $length = (Get-Item -LiteralPath $Path -Force).Length
 
     if ($length -gt $script:MaxFileSizeBytes) {
-        Write-Log -Level WARN -Message "File exceeds the size limit, skipping: $Path"
+        Write-Log -Level WARN -Message "File exceeds the size limit, skipping: $displayPath"
         $script:SkippedCount++
         return 0
     }
 
     $issues = Get-FileIssues -Path $Path
     if ($issues -eq '') {
-        Write-Log -Level PROCESSING -Message "No issues detected, skipping: $Path"
+        Write-Log -Level PROCESSING -Message "No issues detected, skipping: $displayPath"
         $script:SkippedCount++
         return 0
     }
 
     if (Test-UnsupportedForContents -Path $Path) {
-        Write-Log -Level WARN -Message "Binary content (NUL byte) detected, skipping: $Path"
+        # The line is followed by the byte offset of the offending NUL, because a
+        # file can be text for its first megabytes and binary far past the point
+        # where a reader would look. Without the offset the report is not
+        # actionable on a large file.
+        $nulOffset = Find-NulByteOffset -Path $Path
+        $where = if ($null -eq $nulOffset) { '' } else { " at byte offset $nulOffset" }
+        Write-Log -Level WARN -Message "Binary content (NUL byte) detected$where, skipping: $displayPath"
         $script:SkippedCount++
         return 0
     }
 
     $category = Get-FileCategory -Path $Path
-    Write-Log -Level PROCESSING -Message "Processing: $Path (Issues: $issues, Type: $category)"
+    Write-Log -Level PROCESSING -Message "Processing: $displayPath (Issues: $issues, Type: $category)"
 
     $securityState = Get-FileSecurityState -Path $Path
     if ($null -eq $securityState) {
-        Write-Log -Level ERROR -Message "Cannot get file attributes: $Path"
+        Write-Log -Level ERROR -Message "Cannot get file attributes: $displayPath"
         $script:ErrorTypes['processing']++
         return 4
     }
@@ -747,7 +820,7 @@ function Invoke-CleanFile {
         [System.IO.File]::Copy($fullPath, $backupPath, $true)
     }
     catch {
-        Write-Log -Level ERROR -Message "Failed to create backup: $Path"
+        Write-Log -Level ERROR -Message "Failed to create backup: $displayPath"
         $script:ErrorTypes['processing']++
         return 4
     }
@@ -758,7 +831,7 @@ function Invoke-CleanFile {
         [System.IO.File]::WriteAllBytes($tempPath, $cleaned)
     }
     catch {
-        Write-Log -Level ERROR -Message "Failed to process file content: $Path"
+        Write-Log -Level ERROR -Message "Failed to process file content: $displayPath"
         $script:ErrorTypes['processing']++
         Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
@@ -775,10 +848,10 @@ function Invoke-CleanFile {
             if (Test-Path -LiteralPath $backupPath) { [System.IO.File]::Copy($backupPath, $fullPath, $true) }
         }
         catch {
-            Write-Log -Level WARN -Message "Rollback failed for: $Path"
+            Write-Log -Level WARN -Message "Rollback failed for: $displayPath"
         }
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
-        Write-Log -Level ERROR -Message "Failed to replace original file: $Path"
+        Write-Log -Level ERROR -Message "Failed to replace original file: $displayPath"
         $script:ErrorTypes['processing']++
         Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
         return 1
@@ -790,7 +863,7 @@ function Invoke-CleanFile {
         (Get-Item -LiteralPath $Path -Force).LastWriteTimeUtc = $lastWriteTimeUtc
     }
     catch {
-        Write-Log -Level WARN -Message "Could not restore the modification time for: $Path"
+        Write-Log -Level WARN -Message "Could not restore the modification time for: $displayPath"
     }
 
     Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
@@ -798,12 +871,12 @@ function Invoke-CleanFile {
     $script:ProcessedCount++
     if (-not $script:FileTypeCounts.Contains($category)) { $script:FileTypeCounts[$category] = 0 }
     $script:FileTypeCounts[$category]++
-    $script:ProcessedFiles.Add($Path)
+    $script:ProcessedFiles.Add($displayPath)
 
     if ($issues -like '*BOM*') { $script:BomRemovedCount++ }
     if ($issues -like '*CRLF*') { $script:CrlfFixedCount++ }
 
-    Write-Log -Level SUCCESS -Message "Successfully processed: $Path (Fixed: $issues)"
+    Write-Log -Level SUCCESS -Message "Successfully processed: $displayPath (Fixed: $issues)"
     return 0
 }
 
@@ -814,7 +887,13 @@ function Invoke-DryRunFile {
     #>
     [CmdletBinding()]
     [OutputType([int])]
-    param([Parameter(Mandatory)][string] $Path)
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        # False for a file named on the command line; see Invoke-CleanFile.
+        [bool] $DisplayRelative = $true
+    )
+
+    $displayPath = if ($DisplayRelative) { Format-DisplayPath -Path $Path } else { $Path }
 
     $issues = Get-FileIssues -Path $Path
     if ($issues -ne '') {
@@ -822,13 +901,13 @@ function Invoke-DryRunFile {
         $script:ProcessedCount++
         if (-not $script:FileTypeCounts.Contains($category)) { $script:FileTypeCounts[$category] = 0 }
         $script:FileTypeCounts[$category]++
-        $script:ProcessedFiles.Add($Path)
-        Write-LogLine "Would process: $Path (Issues: $issues, Type: $category)"
+        $script:ProcessedFiles.Add($displayPath)
+        Write-LogLine "Would process: $displayPath (Issues: $issues, Type: $category)"
         return 0
     }
 
     $script:SkippedCount++
-    Write-Log -Level PROCESSING -Message "Would skip (clean): $Path"
+    Write-Log -Level PROCESSING -Message "Would skip (clean): $displayPath"
     return 0
 }
 
@@ -1028,6 +1107,12 @@ function Show-Statistics {
 
         Write-LogLine "Access errors: $($script:ErrorTypes['access'])"
         Write-LogLine "File size errors: $($script:ErrorTypes['size'])"
+        # The size counter is treated differently from the reference on purpose.
+        # There it is initialised, printed and never incremented: `size` is allowed
+        # to the associative array only at line 104 and read at line 538 of
+        # clean-bom-senior.sh, and no code path raises it - an over-sized file is
+        # skipped by `find -size -100Mc` and counted as skipped, not as an error.
+        # The port keeps the line for output parity; the counter still reads 0.
         Write-LogLine "Processing errors: $($script:ErrorTypes['processing'])"
         Write-LogLine "Other errors: $($script:ErrorTypes['other'])"
     }
@@ -1088,9 +1173,9 @@ function Invoke-Main {
             }
 
             if ($script:DryRun) {
-                $null = Invoke-DryRunFile -Path $file
+                $null = Invoke-DryRunFile -Path $file -DisplayRelative $false
             }
-            elseif ((Invoke-CleanFile -Path $file) -ne 0) {
+            elseif ((Invoke-CleanFile -Path $file -DisplayRelative $false) -ne 0) {
                 $exitCode = 1
             }
         }
