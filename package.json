@@ -1,7 +1,7 @@
 {
   "name": "clean-bom-senior",
-  "version": "2.7.0",
-  "description": "Enterprise-grade CLI utility to safely remove invisible UTF-8 BOM markers and normalize Windows CRLF line endings from source code files.",
+  "version": "3.0.0",
+  "description": "Enterprise-grade CLI to safely remove invisible UTF-8 BOM markers and normalize Windows CRLF line endings — with a Smart BOM Policy that never strips a BOM the file actually requires (UTF-16/32, Excel/Notepad-sensitive text). Native Node.js: Linux, macOS, Windows.",
   "author": {
     "name": "Mikhail Deynekin",
     "email": "mid1977@gmail.com",
@@ -11,14 +11,18 @@
   "keywords": [
     "bom",
     "utf8",
+    "utf-8",
     "byte-order-mark",
     "crlf",
     "line-endings",
     "encoding",
     "php",
     "bash",
+    "node",
     "powershell",
     "windows",
+    "macos",
+    "linux",
     "cli",
     "devtools",
     "devops",
@@ -26,7 +30,8 @@
     "formatter",
     "linter",
     "git-hooks",
-    "ci-cd"
+    "ci-cd",
+    "pre-commit"
   ],
   "homepage": "https://github.com/paulmann/Clean_BOM_Senior#readme",
   "repository": {
@@ -37,12 +42,8 @@
     "url": "https://github.com/paulmann/Clean_BOM_Senior/issues"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   },
-  "os": [
-    "linux",
-    "darwin"
-  ],
   "bin": {
     "bom": "./bin/bom.js",
     "clean-bom-senior": "./bin/bom.js"
@@ -51,10 +52,23 @@
     "bin/",
     "clean-bom-senior.sh",
     "clean-bom-senior.ps1",
+    "clean-bom-senior.bat",
+    "VERSION",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
+    "test": "node tests/node/run-tests.mjs",
+    "test:sh": "bash tests/sh/run-tests.sh",
+    "test:ps": "pwsh -NoLogo -NoProfile -File tests/ps/run-tests.ps1",
+    "test:diff": "python3 tests/ps/differential.py",
+    "test:all": "node tests/node/run-tests.mjs && bash tests/sh/run-tests.sh && pwsh -NoLogo -NoProfile -File tests/ps/run-tests.ps1",
+    "help:sync": "python3 scripts/gen-ps-help.py",
+    "help:check": "python3 scripts/gen-ps-help.py --check",
+    "selftest": "node bin/bom.js --self-test",
+    "lint:sh": "shellcheck clean-bom-senior.sh tests/sh/run-tests.sh",
+    "version:check": "bash scripts/check-version-consistency.sh",
     "postinstall": "node bin/postinstall.js"
   }
 }

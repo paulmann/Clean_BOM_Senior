@@ -1,4 +1,10 @@
 @echo off
+rem ========================================================================
+rem  LEGACY PORT - frozen at the v2.07 CLI contract.
+rem  The v3 contract is implemented by clean-bom-senior.sh and the npm CLI
+rem  (bin/bom.js, native Node.js - the recommended v3 tool on Windows).
+rem  See CHANGELOG.md and docs/TESTING.md (tests/legacy/ pins v2.07).
+rem ========================================================================
 rem ===========================================================================
 rem  clean-bom-senior.bat - UTF-8 BOM and CRLF cleaner for Windows cmd.exe
 rem ===========================================================================

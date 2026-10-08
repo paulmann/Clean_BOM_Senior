@@ -1,5 +1,9 @@
 # RAGRAF — отчёт о применении
 
+> **Status: historical (v2 era, 2026-10-05).** The audit findings about the shell
+> reference were addressed in v3.0.0 — see `CHANGELOG.md` §Fixed. This report is
+> kept as the record of the v2.07 generation.
+
 **Проект:** `Clean_BOM_Senior` (`C:\AutoClaw\Clean_BOM_Senior`)
 **Дата:** 5 октября 2026
 **Задача:** аудит и тесты `clean-bom-senior.ps1` / `clean-bom-senior.sh`, исправление

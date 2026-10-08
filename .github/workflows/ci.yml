@@ -1,0 +1,148 @@
+# CI for Clean BOM Senior v3.
+#
+# Jobs:
+#   lint           — shellcheck on the reference implementation and test suite
+#   test-shell     — bash test suite on Ubuntu + macOS (GNU and BSD userland)
+#   test-node      — Node test suite on 18/20/22 × Ubuntu/macOS/Windows
+#   test-powershell— PowerShell port suite on Ubuntu/macOS/Windows (pwsh 7.6+)
+#   differential   — sh vs node, and sh vs ps1, byte for byte
+#   selftest       — built-in `--self-test` of every implementation
+#   package        — npm pack dry-run + version consistency guard
+#
+# The cmd.exe port is Windows-only and pinned to the v2.07 contract. Its
+# differential suite was removed together with the v2.07 PowerShell port it
+# used as a baseline; `docs/BAT-PORT.md` §6 shows how to restore both before
+# touching the batch file, and §8 records why no v3 batch port ships.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+      - name: shellcheck (reference implementation)
+        run: shellcheck clean-bom-senior.sh
+      - name: shellcheck (test suite + scripts)
+        run: shellcheck tests/sh/run-tests.sh scripts/check-version-consistency.sh
+      - name: bash -n syntax gate
+        run: bash -n clean-bom-senior.sh && bash -n tests/sh/run-tests.sh
+      - name: node --check
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check bin/bom.js && node --check bin/postinstall.js
+
+  test-shell:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the shell test suite
+        run: bash tests/sh/run-tests.sh
+      - name: Built-in self-test
+        run: bash clean-bom-senior.sh --self-test
+
+  test-node:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [18, 20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run the Node test suite
+        run: node tests/node/run-tests.mjs
+      - name: Built-in self-test
+        run: node bin/bom.js --self-test
+
+  test-powershell:
+    # The PowerShell port is a full v3 implementation, so it runs on every
+    # host PowerShell runs on - including Linux and macOS, where the
+    # differential against the shell reference is actually executable.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell version gate (7.6+)
+        run: |
+          $v = $PSVersionTable.PSVersion
+          if ($v -lt [Version]'7.6') { throw "PowerShell 7.6+ required, found $v" }
+          "PowerShell $v"
+      - name: Parser gate
+        run: |
+          $t = $null; $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile('./clean-bom-senior.ps1', [ref]$t, [ref]$e)
+          if ($e.Count) { $e | ForEach-Object { $_.Message }; exit 1 }
+      - name: Run the PowerShell test suite
+        run: ./tests/ps/run-tests.ps1
+      - name: Built-in self-test
+        run: ./clean-bom-senior.ps1 --self-test
+
+  differential:
+    # The v3 implementations must agree byte for byte. sh-vs-node runs on both
+    # unix hosts; sh-vs-ps1 additionally needs bash, so on Windows it reports
+    # SKIPPED rather than passing silently.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: sh vs node differential
+        run: node tests/node/run-tests.mjs differential
+      - name: sh vs ps1 differential
+        shell: pwsh
+        run: ./tests/ps/differential.py
+      - name: help text is generated from the reference, not hand-copied
+        shell: pwsh
+        run: |
+          if ($IsWindows) { 'SKIPPED on Windows (needs the bash reference)'; exit 0 }
+          python3 scripts/gen-ps-help.py --check
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Version consistency (VERSION / sh / js / package.json / CHANGELOG)
+        run: bash scripts/check-version-consistency.sh
+      - name: npm pack dry-run
+        run: npm pack --dry-run 2>&1 | tee pack.log && grep -q 'clean-bom-senior-3' pack.log || grep -q 'name:.*clean-bom-senior' pack.log
+      - name: package.json sanity
+        run: node -e "const p=require('./package.json'); if(!p.bin.bom||!p.bin['clean-bom-senior']) process.exit(1)"

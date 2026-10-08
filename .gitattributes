@@ -21,9 +21,19 @@
 
 # PowerShell and the project's own text files are edited and compared as LF. This
 # is what the tools themselves produce, and what the differential tests hash.
+#
+# clean-bom-senior.ps1 must additionally stay PURE ASCII (no BOM). A UTF-8 BOM
+# in front of its `#!/usr/bin/env pwsh` shebang breaks direct invocation on
+# Unix: the kernel reads EF BB as the magic, falls back to /bin/sh, and the run
+# dies with "\xEF\xBB\xBF#!/usr/bin/env: No such file or directory". The help
+# text it emits is still not ASCII - the reference's em dashes and arrows are
+# stored as placeholders and restored on output. tests/ps/run-tests.ps1 asserts
+# both halves. See docs/PS-PORT.md section 5.
 *.ps1 text eol=lf
 *.psm1 text eol=lf
 *.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
 *.json text eol=lf
 *.md text eol=lf
 *.yaml text eol=lf
@@ -34,3 +44,6 @@
 *.jpg binary
 *.ico binary
 *.zip binary
+
+# The help generator and the differential harness.
+*.py text eol=lf
