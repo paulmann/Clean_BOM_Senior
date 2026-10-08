@@ -1,0 +1,24 @@
+# Python bytecode from the help generator and the differential harness.
+__pycache__/
+*.py[cod]
+
+# Working directories of the test harnesses. Both clean up after themselves;
+# these are the DIFF_KEEP=1 / CLEANBOM_PS_KEEPWS=1 leftovers.
+.difftmp/
+cleanbom-ps-test.*/
+
+# Node
+node_modules/
+npm-debug.log*
+*.tgz
+
+# Editors and OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Never ignore the tool's own sources: clean-bom-senior.bat is a source file
+# whose CRLF endings are load-bearing (see .gitattributes).

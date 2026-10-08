@@ -1,18 +1,37 @@
 # Batch Port — `clean-bom-senior.bat`
 
-A third implementation of the same contract, for hosts where neither Git Bash nor
-PowerShell is available: Windows `cmd.exe`, using only commands that ship with
-Windows 10/11.
+> **Status: legacy (v2.07 contract), frozen — and currently untested.**
+> v3 lives in `clean-bom-senior.sh` (reference), `bin/bom.js` (npm CLI) and
+> `clean-bom-senior.ps1` (PowerShell 7.6+, full v3 port — see `docs/PS-PORT.md`).
+> This document remains the definitive guide to the cmd.exe implementation, its
+> traps, and — in §8 — the measured assessment of why a v3 batch port is not
+> shipped.
 
-| | `clean-bom-senior.sh` | `clean-bom-senior.ps1` | `clean-bom-senior.bat` |
-|---|---|---|---|
-| Host | Linux, macOS, Git Bash | Windows, PowerShell 7.6 | Windows 10/11, `cmd.exe` |
-| Byte I/O | `sed`, `od` | .NET | `certutil -encodehex` / `-decodehex` |
-| Parity basis | reference | byte-for-byte vs `.sh` | byte-for-byte vs `.ps1` and `.sh` |
-| Test | — | `tests/differential.ps1` | `tests/bat-differential.ps1` |
+A third implementation of the *v2.07* contract, for hosts where neither Git Bash
+nor PowerShell is available: Windows `cmd.exe`, using only commands that ship
+with Windows 10/11.
 
-Flags, detection window, report shape and exit codes are the same in all three.
-Measured: 15/15 compared fixtures identical, `bat exit: 0  port exit: 0  shell exit: 0`.
+| | `clean-bom-senior.sh` | `bin/bom.js` | `clean-bom-senior.ps1` | `clean-bom-senior.bat` |
+|---|---|---|---|---|
+| Contract | v3 (reference) | v3 | v3 | **v2.07 (frozen)** |
+| Host | Linux, macOS, Git Bash | anywhere Node ≥ 18 | PowerShell 7.6+ | Windows 10/11, `cmd.exe` |
+| Byte I/O | `sed`, `od` | `Buffer` | .NET `byte[]` | `certutil -encodehex` / `-decodehex` |
+| Parity basis | reference | differential vs `.sh` | differential vs `.sh` | none at present (§6) |
+| Test | `tests/sh` | `tests/node` | `tests/ps` | — |
+
+Flags, detection window, report shape and exit codes were the same in all three
+v2.07 implementations. Measured at the time: 15/15 compared fixtures identical,
+`bat exit: 0  port exit: 0  shell exit: 0`.
+
+**The detection window is the important difference from v3.** This port scans a
+fixed 1024-byte hex window for the substring `0d0a`, which both misses CRLFs
+beyond byte 1024 and matches innocent byte runs across value boundaries
+(`30 D0 A5` contains the characters `0d0a`). v3 scans the actual byte pair over
+the whole file. It also has no Smart BOM Policy: it detects NUL bytes and
+refuses them (divergence 7 below), but it does not classify UTF-16/32 or
+invalid UTF-8, and it has no notion of a BOM that a consumer may require.
+**Do not use this port on a tree you cannot afford to have rewritten.** Use
+`bin/bom.js` or `clean-bom-senior.ps1`.
 
 ```
 Usage:
@@ -148,20 +167,32 @@ result is unaffected.
 
 ## 6. Verifying
 
+**There is currently no automated suite for this file in the tree.** Its
+differential test (`tests/legacy/bat-differential.ps1`) compared the batch port
+against the *v2.07 PowerShell port*, and that port was replaced by a full v3
+implementation — so the comparison baseline no longer exists. The three legacy
+suites were removed with it rather than left pointing at files that are gone.
+
+They are one command away:
+
 ```powershell
-# batch port vs the PowerShell port vs the shell reference
-pwsh -NoLogo -NoProfile -NonInteractive -File .\tests\bat-differential.ps1
+git checkout v3.0.0 -- tests/legacy      # or: git show v3.0.0:tests/legacy/bat-differential.ps1
+git checkout v2.07.0 -- clean-bom-senior.ps1   # the baseline the bat port was pinned to
+pwsh -NoLogo -NoProfile -NonInteractive -File .\tests\legacy\bat-differential.ps1
 ```
 
-Expected: `identical: 15 / 15 compared`, `leftover backups in the batch tree: 0`,
-`batch parity verified: identical bytes against the PowerShell port`, exit code 0.
-Exit code is 1 on any byte difference or exit-code difference, 2 when a required
-script is missing. When Git Bash is absent the shell comparison is skipped and said
-so explicitly — never silently passed.
+Expected then: `identical: 15 / 15 compared`, `leftover backups in the batch
+tree: 0`, `batch parity verified: identical bytes against the PowerShell port`,
+exit code 0. Exit code 1 on any byte or exit-code difference, 2 when a required
+script is missing. When Git Bash is absent the shell comparison is skipped and
+said so explicitly — never silently passed.
 
 Verified once, deliberately, that the test fails on a defect: breaking the
 substitution order and dropping the trailing-CR rule produced
 `[DIFF] crlf_only.css  length 23 vs 21` and exit code 1.
+
+If you change `clean-bom-senior.bat`, restore that suite first and run it on
+Windows. Do not ship a change to this file on the strength of reading it.
 
 ## 7. Limits
 
@@ -173,3 +204,76 @@ substitution order and dropping the trailing-CR rule produced
 * The script is Ctrl+C safe in the sense that it leaves the original intact, but a
   hard kill between the backup and the replacement can leave a
   `<file>.bak.<runid>` file behind. It is named after the run and can be deleted.
+
+## 8. Why there is no v3 batch port (measured, not assumed)
+
+A v3 cmd.exe port was drafted — Smart BOM Policy, `--check`/`--json`,
+directory arguments, exclusions, `--max-size`, the exit-code table, help topics
+and a `--self-test` — and then **not shipped, because it could not be
+executed anywhere.** An unverifiable safety tool is worse than an honest frozen
+one: this script's entire job is to decide *not* to write to a file, and a
+wrong decision is silent data loss.
+
+What was measured while trying to verify it:
+
+| Attempt | Result |
+|---|---|
+| Run `cmd.exe` on Linux | does not exist; no Windows runtime in the build environment |
+| Run it under **wine 8.0** (`wine cmd /c`) | cmd.exe starts and runs trivial scripts, but **delayed expansion is not implemented**: `!V:~0,5!` comes back as the literal text `[~0,5]`, and `set "V=a b" & set "V=!V:b=c!"` returns the literal `[b=c]`. The v3 transform — and the v2 one — is built entirely on delayed expansion, so wine cannot execute it. ANSI escape acquisition (`for /f %%E in ('copy /Z …')`) also yields nothing, and `if "x"=="pat*"` glob matching is unreliable. |
+| Provide `certutil` under wine | does not exist either; a shim emulating `-encodehex`/`-decodehex` type 4 was written and verified byte-identical on every file size 0…4096 (plus 255/256/4096 random) — and is still useless without delayed expansion. It is kept here as a record: `od -An -v -tx1 -w16` renders exactly certutil's type-4 layout, and `printf '%b' '\xNN'` decodes it. |
+
+So a v3 batch port can only be developed **on Windows, against real
+`certutil`**, with the differential run there. That is a legitimate path, not a
+blocked one; it simply has not been taken, and shipping the draft untested
+would have been the wrong trade.
+
+### What cmd.exe could and could not carry
+
+For whoever picks this up, the draft established the boundary precisely:
+
+**Achievable in pure cmd.exe (no extra dependencies):**
+
+* The whole Smart BOM Policy. `certutil -encodehex -f FILE OUT 4` renders 16
+  space-separated lowercase hex values per line, and *keeping the spaces* is
+  what makes byte-aligned matching possible: `findstr /c:"0d 0a"` can then only
+  match a CR immediately followed by an LF, never two neighbouring values
+  across a value boundary. That single observation gives v3 its byte-exact
+  CRLF rule and simultaneously fixes the two v2 detection defects (§ intro).
+  Magic-byte classification is a substring test on the first dump line;
+  `00`-detection is the existing `^00` / ` 00` pair of patterns; non-ASCII is
+  `[89abcdef][0-9a-f]`.
+* Exact file size, with no external tool: `for %%A in ("file") do set S=%%~zA`.
+  That makes `--max-size` a real pre-filter instead of a post-hoc check.
+* `--check`, `--dry-run`, `--json`, `--strict`, `--backup`, `--backup-dir`,
+  `--ext`/`--add-ext`, `--exclude`/`--exclude-dir`, `--no-default-excludes`,
+  directory arguments, the exit-code table, `--self-test` (fixtures are easy to
+  build: write hex, `certutil -decodehex`), and every help topic.
+* `--check-update`/`--update` via `curl.exe` (Windows 10 1803+) with `tar.exe`
+  as a fallback, plus header-and-stamp verification before install.
+
+**Not achievable, and must stay documented divergences:**
+
+* **UTF-8 validity.** cmd.exe has no validator. The reference's own precedent
+  applies: when `iconv` is missing it warns once and proceeds as valid. The
+  batch port would delegate to `pwsh`/`powershell.exe` when present and warn
+  when not — which means the invalid-UTF-8 protection is conditional.
+* **Hard links and inodes.** No portable probe; `fsutil hardlink list` works on
+  Windows but there is no inode identity to preserve, so the in-place rewrite
+  path cannot be honoured the way the reference does.
+* **Atomic replace.** `copy /b` over the original is what §5 already describes:
+  correct, attribute-preserving, but not atomic.
+* **Elapsed time.** cmd.exe has no monotonic clock; `durationSeconds` would be
+  reported as `0`.
+* **Throughput.** About one second per 100 KB, because the transform is a batch
+  loop over a hex rendering. A v3 `--max-size` pre-filter makes that bearable
+  for a source tree and still rules out large files.
+* Paths containing `!`, `.bat` files as input, and case-sensitive `--exclude`
+  matching (cmd's `if "x"=="pat*"` is case-insensitive, which on Windows is
+  arguably the *correct* behaviour).
+
+### Recommendation
+
+On Windows, use `bin/bom.js` (npm) or `clean-bom-senior.ps1`. Both implement
+v3 fully and both are covered by a differential against the reference. Keep
+this file for the hosts where nothing else runs, and treat it as a v2.07 tool:
+run it with `--dry-run` first.
