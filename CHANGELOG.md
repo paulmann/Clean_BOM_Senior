@@ -141,57 +141,7 @@ decision is logged with a reason and exposed in `--json`:
     SC2181×1); v3 is shellcheck-clean (0.9.0, default severity).
 16. **CRLF detection was line-based, not byte-exact** — found by the
     PowerShell port, and a defect of *this* release's first draft rather than
-    of v2. `has_crlf` used `grep '<CR>
-
-### Changed
-
-- Warnings are visible **by default** (v2 hid `WARN` behind `--verbose` —
-  which is how protected-file decisions would have gone unnoticed).
-- Summary: added `Files scanned`, the *Protected / Kept Unchanged* section
-  and per-reason counters; v2 labels (`Files processed:`, `BOM signatures
-  removed:`, …) are unchanged.
-- Recursive display paths keep the v2 `./name` form; explicit arguments are
-  echoed verbatim; directory scans display `dir/name`.
-- Empty files are skipped by the walk (they cannot carry BOM/CRLF).
-- Detection reads files fully (byte-exactness over sampling); deep checks
-  (NUL, UTF-8 validity, non-ASCII) run **only** for modification candidates,
-  so clean trees stay fast.
-
-### Compatibility
-
-| Implementation | Version | Status |
-|---|---|---|
-| `clean-bom-senior.sh` | 3.0.0 | reference (Linux/macOS/WSL/Git Bash) |
-| `bin/bom.js` (npm `bom` / `clean-bom-senior`) | 3.0.0 | native Node.js, all platforms incl. Windows |
-| `clean-bom-senior.ps1` | 3.0.0 | **full v3 port**, PowerShell 7.6+ (Windows/Linux/macOS) |
-| `clean-bom-senior.bat` | 2.07.0 | **legacy**, frozen at the v2 contract |
-
-- Every v2 flag (`-h -V -v -n --no-bom-clear --no-rn-normalize --`,
-  positional files) behaves the same in v3 where it was not broken; the
-  fixed behaviours above are deliberate, documented breaking changes
-  (hence 3.0.0).
-- The v2.07 differential/contract suites (`tests/legacy/`) were **removed**:
-  all three of them compared against the v2.07 PowerShell port, which no
-  longer exists, so they had no baseline left. They are one command away —
-  `git show v3.0.0:tests/legacy/` — and `docs/BAT-PORT.md` §6 explains how
-  to restore them before touching the batch port.
-- **The cmd.exe port was deliberately not carried to v3.** A full draft was
-  written and then withheld, because it could not be executed anywhere:
-  wine's `cmd.exe` does not implement delayed expansion (`!V:~0,5!` returns
-  the literal `[~0,5]`), has no ANSI escape acquisition, and Windows' own
-  `certutil` — the only byte-I/O path cmd.exe has — does not exist under
-  wine. An unverifiable safety tool is worse than an honest frozen one.
-  `docs/BAT-PORT.md` §8 records the measurements and draws the exact line
-  between what cmd.exe could and could not carry.
-
-[3.0.0]: https://github.com/paulmann/Clean_BOM_Senior/releases/tag/v3.0.0
-
-## [2.7.0] and earlier (2.07.x script generation)
-
-See the git history and `docs/RAGRAF-REPORT.md` / `docs/BAT-PORT.md` for the
-v2 era: the original shell tool, npm packaging, the PowerShell 7.6 port with
-byte-for-byte parity tests, and the cmd.exe batch port via `certutil`.
-` (file ends in LF) and an awk
+    of v2. `has_crlf` used `grep '<CR>' (file ends in LF) and an awk
     end-of-line test otherwise. Every line-oriented tool defines "end of
     line" by the LF byte, so neither can distinguish a CR *immediately
     followed by* LF from a CR that merely ends an LF-delimited line.
@@ -211,6 +161,47 @@ byte-for-byte parity tests, and the cmd.exe batch port via `certutil`.
     after; a 6 MB file that does contain CRs costs ~1.9 s instead of ~0.01 s.
     Pinned by `t_policy_utf16_crlf_detection_regression` (bash) and its Node
     twin; reverting the fix turns four assertions red.
+
+17. **A run of CRs before the LF was handled once, not to exhaustion** — a
+    defect of all three implementations, found by the sh<->node and sh<->ps1
+    differentials only after the MSYS `grep` defect above stopped masking it.
+    The rule was written for a single CR: "delete a CR that is followed by LF".
+    On `x CR CR LF` that removes the first CR and leaves `x LF CR LF`, which is
+    still a CRLF, so `verify_clean_content` rejected the result and the run
+    reported `Verification failed after cleaning` instead of cleaning the file.
+    The three implementations did not even fail the same way: the reference wrote
+    the bad bytes out, while `bin/bom.js` and `clean-bom-senior.ps1` refused to
+    write and counted an error. A run is rare but real (touchpad and IME input,
+    concatenated fragments), and the shared fixture `f8.xml` in the Node suite
+    had carried the pattern all along — it was merely invisible while the
+    reference refused to normalise CRLF at all under Git Bash.
+    Fixed by collapsing the whole run to the single LF: `x CR CR LF` becomes
+    `x LF` on all three, which also makes a second run a no-op, as a text tool
+    must be (contract §7.2). Pinned by `t_core_cr_run_before_lf` (bash), its
+    Node twin and a PowerShell assertion; reverting the fix in `bom.js` or the
+    `.ps1` makes the differential red again.
+18. **The MSYS `grep` pre-filter silenced CRLF detection completely.** `grep` is
+    text-mode under Git Bash: it strips CR bytes before matching, so the "fast
+    reject when the file has no CR byte at all" branch fired for files that were
+    full of CRLF. Measured on Git Bash 5.3.15 — the same file gives
+    `grep -c <CR>` = 0, `grep -U` = 2, `tr -dc <CR> | wc -c` = 2. On that
+    platform the reference therefore never normalised a single CRLF, while
+    `README.md` advertises Git Bash support and `--self-test` was 4 of 10 green.
+    The pre-filter now counts CR bytes with `tr -dc <CR> | wc -c` (byte-oriented
+    by construction, portable to BSD grep, and safe under `pipefail` because the
+    consumer reads to EOF). Reverting it to `grep` turns six assertions red.
+19. **`--update` refused every valid download whose script exceeded the pipe
+    buffer.** The version-stamp check was
+    `printf '%s' "$content" | grep -q "^VERSION=\"${remote}\""`, and under
+    `set -o pipefail` the producer's SIGPIPE became the status of the whole
+    pipeline: `grep -q` exits at the match, `printf` is still writing an 80 KB
+    script, and the probe measured `PIPESTATUS = 141 0` — which `if !` reads as
+    "stamp not found", so the updater refused a correct release and exited 3.
+    Below the pipe buffer this cannot happen (64 KiB on MSYS, 16 KiB on macOS),
+    which is why the 23 KB v2 script never showed it. The consumer is now `awk`,
+    which reads to EOF; its `index()` test is also a literal match, so the dots
+    in the expected version can no longer act as regex wildcards.
+
 
 ### Changed
 

@@ -53,7 +53,14 @@ stay untouched. Notes on exactness:
 - A lone `CR` at EOF (no `LF` after it) is *not* a CRLF and never flags a
   file; CR-only "old Mac" files are left alone. (When a file *is* rewritten
   because of real CRLFs, a trailing CR at EOF is removed too — the documented
-  `sed s/\r$//` semantics inherited from v2.)
+  `sed s/\r$//` semantics inherited from v2.) A BOM-only rewrite does not count
+  as "rewritten" here: it is a plain byte copy, so a lone CR at EOF keeps its
+  byte.
+- A **run** of CRs before the LF collapses to that single LF (`x CR CR LF` →
+  `x LF`). Removing only one CR per line is not idempotent: the leftover `CR LF`
+  is still a CRLF, the post-write verification rejects it, and the tool would
+  throw away a file it should have cleaned. This is measured, not theoretical —
+  it happened on all three implementations until the rule was pinned by tests.
 - A BOM in the middle of a file is not a BOM (it is a ZWNBSP); only bytes 0–2
   count.
 

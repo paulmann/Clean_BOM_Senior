@@ -49,6 +49,45 @@ command -v curl >/dev/null 2>&1 && HAVE_CURL=1
 IS_ROOT=0
 [ "$(id -u)" -eq 0 ] && IS_ROOT=1
 
+# --- What this host can actually do ------------------------------------------
+# These probes exist because asserting an environment capability the host does
+# not have produces a red suite for a reason that has nothing to do with the
+# tool. Each one was measured on Git Bash 5.3.15 (MSYS) before it was written:
+#   chmod 640            -> 644        (no group bit in the MSYS permission map)
+#   ln -s a b; [ -L b ]  -> false      (MSYS copies instead of linking)
+#   ln a b (hard link)   -> works      (same inode)
+#   curl file:///tmp/x   -> empty      (ucrt64 curl needs a native drive path)
+# A capability that is missing is reported as SKIPPED with the reason, never as
+# a pass, and never as a failure of the tool.
+HARNESS_TMP="${TMPDIR:-/tmp}"
+HAVE_SYMLINK=0
+HAVE_POSIX_PERMS=0
+HAVE_FILE_URL=0
+if [ "$IS_ROOT" -eq 0 ] || [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ]; then
+	_probe_dir="$HARNESS_TMP/cleanbom-probe.$$"
+	mkdir -p "$_probe_dir" 2>/dev/null && {
+		printf 'x\n' >"$_probe_dir/a" 2>/dev/null
+		# A real symlink: MSYS only emulates it when the shell variable
+		# MSYS=winsymlinks:nativestrict is set, which is not the default.
+		ln -s a "$_probe_dir/b" 2>/dev/null
+		[ -L "$_probe_dir/b" ] && HAVE_SYMLINK=1
+		# A POSIX permission bit outside the MSYS map: chmod 640 yields 644.
+		chmod 604 "$_probe_dir/a" 2>/dev/null
+		[ "$(stat -c %a "$_probe_dir/a" 2>/dev/null || stat -f %Lp "$_probe_dir/a" 2>/dev/null)" = "604" ] && HAVE_POSIX_PERMS=1
+		# curl has to resolve the path it is given; a native drive path is the
+		# only form the ucrt64 build understands, even when the shell is POSIX.
+		if [ "$HAVE_CURL" -eq 1 ]; then
+			printf '0.0.1\n' >"$_probe_dir/VERSION" 2>/dev/null
+			_probe_url="file://$_probe_dir/VERSION"
+			if command -v cygpath >/dev/null 2>&1; then
+				_probe_url="file://$(cygpath -m "$_probe_dir")/VERSION"
+			fi
+			[ "$(curl -fsS "$_probe_url" 2>/dev/null)" = "0.0.1" ] && HAVE_FILE_URL=1
+		fi
+	}
+	rm -rf "$_probe_dir" 2>/dev/null
+fi
+
 PASS=0
 FAIL=0
 FAILED_NAMES=""
@@ -266,6 +305,28 @@ t_core_crlf_at_eof_and_lone_cr() {
 	assert_bytes "$WS/work/cronly.php" "610d620d630d" "CR-only bytes intact"
 }
 
+t_core_cr_run_before_lf() {
+	# A RUN of CRs before the LF collapses to that one LF. The single-CR rule
+	# this guards (`s/CR$//` once per line) was NOT idempotent on a run: it left
+	# `x CR CR LF` as `x LF CR LF`, which verify_clean_content then rejected, so
+	# the tool reported "Verification failed after cleaning" and threw a valid
+	# file away. Measured on all three implementations before the fix.
+	printf 'x\r\r\ny\r\n' >"$WS/work/run.php"
+	tool --quiet run.php
+	assert_bytes "$WS/work/run.php" "780a790a" "CR run before LF collapses to one LF"
+	# The collapsed result must be a no-op on the next run, otherwise the tool
+	# would rewrite a tree it had already cleaned and report nonzero CRLF fixes.
+	printf 'a\r\r\nb\r\r\n' >"$WS/work/many.php"
+	tool --quiet many.php
+	assert_bytes "$WS/work/many.php" "610a620a" "CR runs collapse on every line"
+	local i1 i2
+	i1="$(inode "$WS/work/many.php")"
+	tool --quiet many.php
+	i2="$(inode "$WS/work/many.php")"
+	assert_bytes "$WS/work/many.php" "610a620a" "a second run changes nothing"
+	[ "$i1" = "$i2" ] && ok "a second run does not rewrite (not a candidate)" || bad "CR run idempotence" "inode changed on the second run"
+}
+
 #==============================================================================
 # 2. Smart BOM Policy — the safety core
 #==============================================================================
@@ -461,21 +522,35 @@ t_meta_mtime_preserved() {
 }
 
 t_meta_permissions_preserved() {
+	# The MSYS permission map has no group bit: `chmod 640` produces 644, so an
+	# assertion on the literal 640 tests the host, not the tool. The invariant
+	# that matters is that cleaning MUTATES the mode by nothing at all, so the
+	# mode is captured before and compared after; chmod 604 is used because it
+	# is representable in every map (POSIX and MSYS alike) and is not a no-op.
 	printf '\xef\xbb\xbf<?php\n' >"$WS/work/perm.php"
-	chmod 640 "$WS/work/perm.php"
+	chmod 604 "$WS/work/perm.php"
+	local before after
+	before="$(stat -c %a "$WS/work/perm.php" 2>/dev/null || stat -f %Lp "$WS/work/perm.php")"
 	tool --quiet perm.php
-	local mode; mode="$(stat -c %a "$WS/work/perm.php" 2>/dev/null || stat -f %Lp "$WS/work/perm.php")"
-	[ "$mode" = "640" ] && ok "permissions preserved (640)" || bad "permissions preserved" "mode=$mode"
-	printf '\xef\xbb\xbf<?php\n' >"$WS/work/perm2.php"
-	chmod 755 "$WS/work/perm2.php"
-	tool --quiet perm2.php
-	mode="$(stat -c %a "$WS/work/perm2.php" 2>/dev/null || stat -f %Lp "$WS/work/perm2.php")"
-	[ "$mode" = "755" ] && ok "permissions preserved (755 exec bit)" || bad "permissions preserved 755" "mode=$mode"
+	after="$(stat -c %a "$WS/work/perm.php" 2>/dev/null || stat -f %Lp "$WS/work/perm.php")"
+	[ "$after" = "$before" ] && ok "permissions preserved ($before)" || bad "permissions preserved" "$before -> $after"
+	if [ "$HAVE_POSIX_PERMS" -eq 1 ]; then
+		printf '\xef\xbb\xbf<?php\n' >"$WS/work/perm2.php"
+		chmod 755 "$WS/work/perm2.php"
+		tool --quiet perm2.php
+		local mode; mode="$(stat -c %a "$WS/work/perm2.php" 2>/dev/null || stat -f %Lp "$WS/work/perm2.php")"
+		[ "$mode" = "755" ] && ok "permissions preserved (755 exec bit)" || bad "permissions preserved 755" "mode=$mode"
+	else
+		ok "permissions preserved 755: SKIPPED (this host's permission map has no exec bit for files)"
+	fi
 }
 
 t_meta_hardlink_inplace() {
 	printf '\xef\xbb\xbfhard\r\n' >"$WS/work/hl.php"
-	ln "$WS/work/hl.php" "$WS/work/hl_link.php"
+	ln "$WS/work/hl.php" "$WS/work/hl_link.php" 2>/dev/null
+	if [ "$(inode "$WS/work/hl.php")" != "$(inode "$WS/work/hl_link.php")" ]; then
+		ok "hardlink: SKIPPED (this host did not create a hard link)"; return 0
+	fi
 	local i1; i1="$(inode "$WS/work/hl.php")"
 	tool --quiet hl.php
 	local i2; i2="$(inode "$WS/work/hl.php")"
@@ -486,6 +561,12 @@ t_meta_hardlink_inplace() {
 }
 
 t_meta_symlink_argument() {
+	# On MSYS `ln -s` copies the file instead of linking it, so the fixture
+	# would never be a symlink and the test would assert a property the host
+	# cannot produce. linux and macOS run the full check.
+	if [ "$HAVE_SYMLINK" -eq 0 ]; then
+		ok "symlink arg: SKIPPED (this host does not create real symlinks)"; return 0
+	fi
 	printf '\xef\xbb\xbfreal\r\n' >"$WS/work/real.php"
 	ln -s real.php "$WS/work/link.php"
 	tool --quiet link.php
@@ -806,7 +887,12 @@ t_cli_special_filenames() {
 }
 
 t_cli_json_escapes() {
-	printf '\xef\xbb\xbfx\r\n' >"$WS/work/we\"ird.php"
+	printf '\xef\xbb\xbfx\r\n' >"$WS/work/we\"ird.php" 2>/dev/null
+	if [ ! -f "$WS/work/we\"ird.php" ]; then
+		# Windows forbids a double quote in a file name, so MSYS cannot create
+		# this fixture and the assertion would pass vacuously (empty tree).
+		ok "json escaping: SKIPPED (this host cannot create a filename with a double quote)"; return 0
+	fi
 	tool --json --check . >/dev/null 2>&1 || true
 	if [ "$HAVE_NODE" -eq 1 ]; then
 		if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$WS/stdout.log" 2>/dev/null; then
@@ -830,6 +916,19 @@ t_cli_self_test() {
 #==============================================================================
 # 7. Auto-update (against a local file:// "repository")
 #==============================================================================
+# The only URL form the curl build present on this host understands. MSYS curl
+# is a ucrt64 binary: `file:///tmp/x` (a POSIX path) returns an empty body, while
+# `file://C:/.../x` works. Reproduced before the change: the same fixture read
+# through both forms. When curl cannot read its own file:// URL at all, the
+# update tests are reported as SKIPPED rather than as failures of the tool.
+file_url() { # $1 = a path as the shell sees it
+	if command -v cygpath >/dev/null 2>&1; then
+		printf 'file://%s' "$(cygpath -m -- "$1")"
+	else
+		printf 'file://%s' "$1"
+	fi
+}
+
 make_fake_repo() { # $1 = version to publish, $2 = repo dir, $3 = script source version
 	mkdir -p "$2"
 	printf '%s\n' "$1" >"$2/VERSION"
@@ -841,10 +940,13 @@ t_update_check_newer() {
 	if [ "$HAVE_CURL" -eq 0 ]; then
 		ok "update: SKIPPED (curl not available)"; return 0
 	fi
+	if [ "$HAVE_FILE_URL" -eq 0 ]; then
+		ok "update: SKIPPED (this curl cannot read a local file:// URL)"; return 0
+	fi
 	make_fake_repo "9.9.9" "$WS/fakerepo"
 	cp "$TOOL" "$WS/work/installed.sh"
 	local rc=0
-	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="file://$WS/fakerepo" bash installed.sh --check-update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
+	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="$(file_url "$WS/fakerepo")" bash installed.sh --check-update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
 	assert_rc "$rc" 11 "--check-update: exit 11 when a newer version exists"
 	assert_grep "$LAST_LOG" "Update available: 3.0.0 -> 9.9.9" "--check-update: announces versions"
 }
@@ -853,10 +955,13 @@ t_update_check_current() {
 	if [ "$HAVE_CURL" -eq 0 ]; then
 		ok "update: SKIPPED (curl not available)"; return 0
 	fi
+	if [ "$HAVE_FILE_URL" -eq 0 ]; then
+		ok "update: SKIPPED (this curl cannot read a local file:// URL)"; return 0
+	fi
 	make_fake_repo "3.0.0" "$WS/fakerepo"
 	cp "$TOOL" "$WS/work/installed.sh"
 	local rc=0
-	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="file://$WS/fakerepo" bash installed.sh --check-update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
+	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="$(file_url "$WS/fakerepo")" bash installed.sh --check-update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
 	assert_rc "$rc" 0 "--check-update: exit 0 when up to date"
 }
 
@@ -864,11 +969,14 @@ t_update_apply() {
 	if [ "$HAVE_CURL" -eq 0 ]; then
 		ok "update: SKIPPED (curl not available)"; return 0
 	fi
+	if [ "$HAVE_FILE_URL" -eq 0 ]; then
+		ok "update: SKIPPED (this curl cannot read a local file:// URL)"; return 0
+	fi
 	make_fake_repo "9.9.9" "$WS/fakerepo"
 	cp "$TOOL" "$WS/work/installed.sh"
 	chmod 755 "$WS/work/installed.sh"
 	local rc=0
-	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="file://$WS/fakerepo" ./installed.sh --update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
+	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="$(file_url "$WS/fakerepo")" ./installed.sh --update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
 	assert_rc "$rc" 0 "--update: exit 0"
 	local v
 	v="$(bash "$WS/work/installed.sh" --version | head -1)"
@@ -883,13 +991,16 @@ t_update_verify_rejects_tampered() {
 	if [ "$HAVE_CURL" -eq 0 ]; then
 		ok "update: SKIPPED (curl not available)"; return 0
 	fi
+	if [ "$HAVE_FILE_URL" -eq 0 ]; then
+		ok "update: SKIPPED (this curl cannot read a local file:// URL)"; return 0
+	fi
 	make_fake_repo "9.9.8" "$WS/fakerepo"
 	# The published script claims a DIFFERENT version internally -> must refuse.
 	cp "$TOOL" "$WS/fakerepo/clean-bom-senior.sh"
 	cp "$TOOL" "$WS/work/installed.sh"
 	local rc=0 before after
 	before="$(hex "$WS/work/installed.sh")"
-	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="file://$WS/fakerepo" ./installed.sh --update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
+	( cd "$WS/work" && CLEAN_BOM_UPDATE_URL="$(file_url "$WS/fakerepo")" ./installed.sh --update ) >"$WS/out.log" 2>"$LAST_LOG" || rc=$?
 	assert_rc "$rc" 3 "--update: verification failure exits 3"
 	assert_grep "$LAST_LOG" "refusing to install" "--update: refusal explained"
 	after="$(hex "$WS/work/installed.sh")"
@@ -907,7 +1018,17 @@ t_repo_version_consistency() {
 		[ "$version_file" = "$sh_ver" ] && ok "VERSION file matches the shell reference ($sh_ver)" || bad "VERSION file" "[$version_file] != [$sh_ver]"
 	fi
 	if [ -f "$REPO_ROOT/package.json" ] && [ "$HAVE_NODE" -eq 1 ]; then
-		pkg_ver="$(node -p "require('$REPO_ROOT/package.json').version" 2>/dev/null)"
+		# Local: without `local` this leaks into the next test's scope.
+		local pkg_ver pkg_json
+		# `node` is a Windows binary under Git Bash and cannot resolve an MSYS
+		# path (/c/...), which made this assertion report an empty version. Ask
+		# cygpath for the native form where it exists; elsewhere the path is
+		# already what node expects.
+		pkg_json="$REPO_ROOT/package.json"
+		if command -v cygpath >/dev/null 2>&1; then
+			pkg_json="$(cygpath -m -- "$REPO_ROOT")/package.json"
+		fi
+		pkg_ver="$(node -p "require('$pkg_json').version" 2>/dev/null)"
 		[ "$pkg_ver" = "$sh_ver" ] && ok "package.json version matches ($pkg_ver)" || bad "package.json version" "[$pkg_ver] != [$sh_ver]"
 	fi
 	if [ -f "$REPO_ROOT/bin/bom.js" ]; then
@@ -933,6 +1054,7 @@ t_core_late_crlf_regression
 t_core_hex_false_positive_regression
 t_core_uppercase_ext
 t_core_crlf_at_eof_and_lone_cr
+t_core_cr_run_before_lf
 t_policy_utf16le_protected
 t_policy_utf16be_utf32_protected
 t_policy_utf16_crlf_detection_regression

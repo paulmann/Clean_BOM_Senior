@@ -210,6 +210,21 @@ test('core: lone CRs and EOF CR semantics', () => {
   writeFixture('mix.php', '610d620d0a630d'); // a\r b\r\n c\r(EOF)
   tool('--quiet', 'mix.php');
   assertBytes('mix.php', 'mixed: lone CR kept, CRLF fixed, EOF CR removed', '610d620a63');
+  // A RUN of CRs before the LF collapses to that one LF. The rule used here
+  // before was written for a single CR (`if (beforeLf || atEof) drop the CR`),
+  // which is NOT idempotent on a run: it produced `x LF CR LF`, the post-write
+  // verification rejected it, and the tool logged "Verification failed after
+  // cleaning" and refused to write the file. Measured before the fix.
+  writeFixture('run.php', '780d0d0a790d0a'); // x\r\r\n y\r\n
+  tool('--quiet', 'run.php');
+  assertBytes('run.php', 'a run of CRs before the LF collapses to one LF', '780a790a');
+  // ...and the collapsed result is a no-op on a second run, so the summary's
+  // "CRLF fixed: 0" stays honest for a tree this tool has already processed.
+  writeFixture('many.php', '610d0d0a620d0d0a'); // a\r\r\n b\r\r\n
+  tool('--quiet', 'many.php');
+  assertBytes('many.php', 'CRLF runs collapse on every line', '610a620a');
+  const r2 = tool('--quiet', 'many.php');
+  assertBytes('many.php', 'a second run changes nothing', '610a620a');
   writeFixture('cronly.php', '610d620d630d'); // a\rb\rc\r — no LF at all
   const st1 = fs.statSync(w('cronly.php'));
   tool('--quiet', 'cronly.php');
@@ -715,6 +730,10 @@ test('cli: special filenames (space, quote)', () => {
 });
 
 test('cli: json escapes a filename with a double quote', () => {
+  // Windows forbids a double quote in a file name: the fixture cannot exist
+  // there and the assertion below would pass against an empty tree. Report the
+  // limitation instead of a green that proves nothing.
+  if (IS_WINDOWS) { ok('json: SKIPPED (Windows cannot create a name with a double quote)'); return; }
   fs.writeFileSync(w('we"ird.php'), Buffer.from(`${BOM}780d0a`, 'hex'));
   const r = tool('--json', '--check', '.');
   try { JSON.parse(r.stdout); ok('json: quote in filename escaped correctly'); }

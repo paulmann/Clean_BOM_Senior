@@ -19,9 +19,9 @@ v2-эры — в `docs/RAGRAF-REPORT.md`, `docs/BAT-PORT.md` и git-истори
 | `bin/bom.js` | **нативная Node-реализация v3.0.0** (npm `bom`/`clean-bom-senior`): Linux/macOS/**Windows** без bash; байт-в-байт паритет с эталоном подтверждён дифференциальным тестом |
 | `clean-bom-senior.ps1` | **полный v3-порт** (PowerShell 7.6+, Windows/Linux/macOS): чистый .NET byte I/O, для очистки внешние инструменты НЕ нужны; паритет с эталоном подтверждён дифференциалом. Файл **чистый ASCII** (иначе BOM ломает shebang на Unix), но справка выдаёт настоящие em-dash/стрелки эталона — они хранятся плейсхолдерами и подставляются на выводе (`docs/PS-PORT.md` §5) |
 | `clean-bom-senior.bat` | **legacy-порт 2.07.0** (cmd.exe, certutil), заморожен и **без автотестов** — почему, см. `docs/BAT-PORT.md` §8 |
-| `tests/sh/run-tests.sh` | v3-набор для эталона: 164 assertion'а, без фреймворков |
+| `tests/sh/run-tests.sh` | v3-набор для эталона: 167 assertion'ов, без фреймворков |
 | `tests/node/run-tests.mjs` | v3-набор для Node (161) + **дифференциальный sh↔node** (8 фикстур) |
-| `tests/ps/run-tests.ps1` | v3-набор для PowerShell-порта: 238 assertion'ов, 64 группы; вызывает инструмент in-process |
+| `tests/ps/run-tests.ps1` | v3-набор для PowerShell-порта: 237 assertion'ов, 63 группы; вызывает инструмент in-process |
 | `tests/ps/differential.py` | **дифференциальный sh↔ps1**: 77 сценариев — байты файлов, состав дерева, оба потока (нормализованные) и код выхода |
 | `scripts/gen-ps-help.py` | **генератор** справки ps1 из here-doc'ов эталона; `--check` — гейт в CI. Справка — часть контракта, руками её не копируем |
 | `docs/CLI-CONTRACT.md` | нормативный контракт v3: флаги, коды выхода, потоки, JSON, байтовая семантика |

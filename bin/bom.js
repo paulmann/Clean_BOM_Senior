@@ -246,8 +246,15 @@ function hasNonAscii(buf, enc) {
 }
 
 /** Build the cleaned content: byte-exact BOM strip + CRLF→LF.
- *  When a file IS rewritten for CRLF, a trailing CR at EOF is removed too
- *  (sed `s/\r$//` semantics — the documented v2 contract, AGENTS inv. 7). */
+ *  Every CR that terminates a line is deleted, and a CR at EOF is deleted with
+ *  it (`sed s/\r$//` semantics, the documented v2 contract) — but a RUN of CRs
+ *  collapses to the one LF, so at most one LF is emitted per line.
+ *
+ *  The single-CR rule this replaced (`if (beforeLf || atEof) skip the CR`) was
+ *  NOT idempotent on a run: `x CR CR LF` came back as `x LF CR LF`, which the
+ *  post-write verification below then rejected — the tool logged "Verification
+ *  failed after cleaning" and left a valid file untouched, reporting an error.
+ *  Measured on the three implementations before the fix. */
 function buildCleanContent(buf, stripBom, fixCrlf) {
   let out = stripBom ? buf.subarray(3) : buf;
   if (!fixCrlf) return Buffer.from(out);
@@ -255,15 +262,19 @@ function buildCleanContent(buf, stripBom, fixCrlf) {
   let start = 0;
   for (let i = 0; i < out.length; i++) {
     if (out[i] !== 0x0d) continue;
-    const beforeLf = i + 1 < out.length && out[i + 1] === 0x0a;
-    const atEof = i === out.length - 1;
-    if (beforeLf || atEof) {
-      parts.push(out.subarray(start, i));
-      start = i + 1;
-    }
+    if (i > 0 && out[i - 1] === 0x0d) continue; // only the FIRST CR of a run
+    let j = i;
+    while (j < out.length && out[j] === 0x0d) j++;
+    if (j === out.length) break; // the run ends the file
+    if (out[j] !== 0x0a) continue; // lone CR run: preserved
+    parts.push(out.subarray(start, i));
+    parts.push(out.subarray(j, j + 1)); // the line end, exactly one LF
+    i = j;
+    start = j + 1;
   }
   if (parts.length === 0) return Buffer.from(out);
-  parts.push(out.subarray(start));
+  if (out[out.length - 1] === 0x0d) parts.push(out.subarray(start, out.length - 1));
+  else parts.push(out.subarray(start));
   return Buffer.concat(parts);
 }
 

@@ -148,10 +148,28 @@ implementations disagreed with each other, and the differential between them
 never caught it because no shared fixture had that byte pattern.
 
 Fixed in the reference (od-rendered hex, so `0d0a` *is* the byte pair and NUL
-bytes are handled; a `grep -q '<CR>'` pre-filter keeps files with no CR at all
-fast), and pinned by `t_policy_utf16_crlf_detection_regression` in
+bytes are handled), and pinned by `t_policy_utf16_crlf_detection_regression` in
 `tests/sh/run-tests.sh` plus its twin in `tests/node/run-tests.mjs`. Reverting
 the fix turns four assertions red, which is how the test was validated.
+
+Two further defects of the reference came out of the same area, both of them
+found by running the suites on Git Bash rather than by reading the code:
+
+- **The `grep` pre-filter silenced CRLF detection under MSYS.** `grep` is
+text-mode there and strips CR bytes before matching, so the "no CR byte anywhere"
+reject fired for files that were full of CRLF (measured on Git Bash 5.3.15: the
+same file gives `grep -c <CR>` = 0, `grep -U` = 2, `tr -dc <CR> | wc -c` = 2).
+The reference then never normalised CRLF at all on that platform, while the
+README advertised Git Bash support — `--self-test` was 4 of 10 green. The
+pre-filter now counts CR bytes with `tr -dc <CR> | wc -c`, which is
+byte-oriented by construction and portable to BSD.
+- **The version-stamp check in `do_update` refused every valid download.**
+`printf '%s' "$content" | grep -q '<stamp>'` gives the pipeline the producer's
+SIGPIPE under `set -o pipefail`: `grep -q` exits at the match, `printf` is killed
+while the 80 KB script is still going out, and the pipeline status becomes 141,
+which `if !` reads as "stamp not found". Measured as `PIPESTATUS = 141 0`. Below
+a pipe buffer (64 KiB on MSYS, 16 KiB on macOS) it does not happen, which is why
+v2's 23 KB script never showed it. The consumer is now `awk`, which reads to EOF.
 
 The lesson is in `docs/TESTING.md` §"Two defects the differential found in the
 reference": a fixture set is only as good as the byte patterns it contains, and
@@ -209,7 +227,9 @@ either fixed or pinned by a test.
 ## 8. Verifying
 
 ```bash
-# the port's own suite (238 assertions, 64 groups), incl. the differential
+# the port's own suite (237 assertions, 63 groups), incl. the differential
+# CLEANBOM_SKIP_DIFF=1 bounds the run: the last test drives the whole 77-case
+# harness, which takes minutes on Windows. It reports SKIPPED, never a pass.
 pwsh -NoLogo -NoProfile -File tests/ps/run-tests.ps1
 
 # the byte-for-byte differential alone (77 scenarios)
@@ -223,10 +243,13 @@ pwsh -NoLogo -NoProfile -File clean-bom-senior.ps1 --self-test
 python3 scripts/gen-ps-help.py --check
 ```
 
-Expected: `ALL PASSED: 238 assertions`, `differential sh vs ps1: 77 identical,
+Expected: `ALL PASSED: 237 assertions`, `differential sh vs ps1: 77 identical,
 0 differing`, `self-test: 10 passed, 0 failed`. The differential reports
 `SKIP` (exit 0, never a silent pass) when bash, the shell reference or pwsh is
-missing — on Windows that means Git Bash must be installed for it to run.
+missing — on Windows that means Git Bash must be installed for it to run. The
+suite finds the interpreter as `python3` first and `python` second, because a
+Windows runner has only the latter; probing for `python3` alone made the
+repository-consistency tests report green without running anything.
 
 Environment variables for debugging:
 
