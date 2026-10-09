@@ -160,12 +160,18 @@ $crlf = ([IO.File]::ReadAllText('<file>')) -match "`r`n"
 "BOM=$bom CRLF=$crlf"     # expected False False, except for §5 exceptions
 ```
 
-POSIX:
+POSIX — use `tr`, not `grep`:
 
 ```bash
 head -c 3 '<file>' | od -An -tx1 | tr -d ' \n'   # must not be efbbbf
-grep -c $'\r' '<file>'                           # must be 0
+tr -dc '\r' < '<file>' | wc -c                   # must be 0
 ```
+
+`grep -c '\r'` is the obvious-looking form and it is **wrong on GNU grep**: `\r` in a
+BRE is not a CR, so the pattern degenerates to the letter `r` and a clean file reports a
+non-zero count (measured 1 on GNU 3.11/Debian and 1 under MSYS, where `tr` reports the
+truthful 0). Use `tr -dc '\r' | wc -c`, or, if grep is preferred,
+`grep -c "$(printf '\r')"` with a real CR byte in the pattern.
 
 For the §5 exceptions the expectation is **inverted**: `.bat`/`.cmd` must show
 `CRLF=True`; a non-ASCII `.ps1`/`.txt`/`.md` must show `BOM=True`, and that is not a defect.
