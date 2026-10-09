@@ -306,6 +306,9 @@ it is dirt — and tells you which decision it made, per file.
 | [`docs/UPDATE.md`](docs/UPDATE.md) | auto-update design, verification, mirrors, release checklist |
 | [`docs/TESTING.md`](docs/TESTING.md) | test architecture, coverage map, the two differentials, PowerShell invocation traps |
 | [`docs/PS-PORT.md`](docs/PS-PORT.md) | the PowerShell port: structure, divergences, traps hit, what it found in the reference |
+| [`docs/LLM-AGENT-USAGE.md`](docs/LLM-AGENT-USAGE.md) | wiring the tool into an LLM agent: skill + rules pointer, per-platform entry points, install when missing |
+| [`skills/clean-bom-crlf/SKILL.md`](skills/clean-bom-crlf/SKILL.md) | the portable skill itself, for any agent framework that loads skills |
+| [`docs/PROMPT-OTHER-HARNESS.md`](docs/PROMPT-OTHER-HARNESS.md) | copy-paste prompt that makes a foreign agent adopt the rule (RU) |
 | [`CHANGELOG.md`](CHANGELOG.md) | v3.0.0: every fixed v2 defect, measured |
 | [`docs/BAT-PORT.md`](docs/BAT-PORT.md) | (legacy) how the cmd.exe port works, and why there is no v3 batch port |
 | [`docs/RAGRAF-REPORT.md`](docs/RAGRAF-REPORT.md) | (legacy) v2-era audit report |
