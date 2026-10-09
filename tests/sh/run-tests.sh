@@ -18,9 +18,14 @@
 # printf escapes only — never as "text" that an editor or git could normalise.
 #===============================================================================
 # Note for linters: every t_* function is invoked dynamically via run_test
-# ("$fn"), so static analysis cannot see the calls (SC2317); and the
-# `[ cond ] && ok || bad` idiom is safe because ok/bad never fail (SC2015).
-# shellcheck disable=SC2317,SC2015,SC2016
+# ("$fn"), so static analysis cannot see the calls — shellcheck reports that as
+# SC2317 on older releases and as SC2329 in 0.11+, where the check was split out
+# of SC2317 and renamed. Both are suppressed here because both describe the same
+# deliberate indirection. `shellcheck --version` on the CI host decides which of
+# the two fires; measured 0.11.0 locally: clean-bom-senior.sh is clean, and this
+# file was 80 findings of SC2329 without this line. The `[ cond ] && ok || bad`
+# idiom is safe because ok/bad never fail (SC2015).
+# shellcheck disable=SC2317,SC2329,SC2015,SC2016
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
