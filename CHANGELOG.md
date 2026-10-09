@@ -201,6 +201,15 @@ decision is logged with a reason and exposed in `--json`:
     which is why the 23 KB v2 script never showed it. The consumer is now `awk`,
     which reads to EOF; its `index()` test is also a literal match, so the dots
     in the expected version can no longer act as regex wildcards.
+20. **The shellcheck gate was red on any host with a current shellcheck.** SC2317
+    ("this function is never invoked") was split in 0.11: indirect invocation is
+    now reported as **SC2329**, and `tests/sh/run-tests.sh` drives its 63 tests
+    through a variable, so an unsuppressed run yields **80 findings** and exit 1.
+    The repository was written and checked against 0.9.0 (`CHANGELOG` §Added,
+    CI installs the Ubuntu package), where the same file is clean — so the gate's
+    result silently depended on the linter's version. Measured: 0.11.0 on
+    Windows 80 findings of SC2329, 0.9.0 on Debian exit 0. The suppression in the
+    suite now names both codes.
 
 
 ### Changed
