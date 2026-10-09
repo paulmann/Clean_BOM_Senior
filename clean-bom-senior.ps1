@@ -746,14 +746,35 @@ function Test-ClassIsSensitive {
 # mid-line are preserved.
 function Convert-CrlfBytes {
     param([byte[]]$Content)
+    # Delete every CR that terminates a line, and a CR at EOF, but emit at most
+    # one LF per line: a RUN of CRs before the LF collapses into it.
+    #
+    # The single-CR rule this replaced (`if (next is LF or at EOF) drop the CR`)
+    # was NOT idempotent on a run - against the reference it left `x CR CR LF`
+    # as `x LF CR LF`, which Test-CleanContentValid below then rejected, so the
+    # port logged "Verification failed after cleaning" and refused to write a
+    # file it should have cleaned. The reference collapsed the run because sed
+    # matched the trailing CR once per pass; this now collapses it explicitly.
     $n = $Content.Length
     $out = [byte[]]::new($n)
     $j = 0
     for ($i = 0; $i -lt $n; $i++) {
         $b = $Content[$i]
         if ($b -eq 13) {
-            if (($i + 1) -lt $n -and $Content[$i + 1] -eq 10) { continue }
-            if (($i + 1) -eq $n) { continue }
+            # Skip the whole run; only its first CR is examined.
+            if ($i -gt 0 -and $Content[$i - 1] -eq 13) { continue }
+            $k = $i
+            while ($k -lt $n -and $Content[$k] -eq 13) { $k++ }
+            if ($k -eq $n) { break }                  # the run ends the file
+            if ($Content[$k] -ne 10) {
+                # A lone CR (mid-line, or a CR-only file): preserved as-is.
+                $out[$j] = $b; $j++
+                continue
+            }
+            # Keep the line end exactly once, then resume right after it.
+            $out[$j] = 10; $j++
+            $i = $k
+            continue
         }
         $out[$j] = $b
         $j++
@@ -766,20 +787,6 @@ function Convert-CrlfBytes {
 
 # Build the cleaned content according to the plan: BOM first, then CRLF
 # (equivalently one pass producing identical bytes - contract section 7.3).
-function Remove-TrailingCr {
-    # The documented v2 `sed s/\r$//` semantics: `$` matches the end of the
-    # buffer as well as the position before a newline, so a CR as the very last
-    # byte goes too - but only on a file that is being rewritten anyway. A file
-    # whose ONLY CR is at EOF is not a candidate at all (Test-HasCrlf requires a
-    # following LF), so it never reaches here.
-    param([byte[]]$Content)
-    $n = $Content.Length
-    if ($n -eq 0 -or $Content[$n - 1] -ne 13) { return , $Content }
-    $res = [byte[]]::new($n - 1)
-    [System.Array]::Copy($Content, 0, $res, 0, $n - 1)
-    return , $res
-}
-
 function Get-CleanContent {
     param([byte[]]$Content, [int]$StripBom, [int]$FixCrlf)
     $src = $Content
@@ -791,9 +798,12 @@ function Get-CleanContent {
     if ($FixCrlf -eq 1) {
         $src = Convert-CrlfBytes $src
     }
-    # Convert-CrlfBytes already drops an EOF CR, so this only bites on the
-    # strip-bom-only path - which is exactly where the reference's sed runs.
-    if ($StripBom -eq 1 -or $FixCrlf -eq 1) { $src = Remove-TrailingCr $src }
+    # A trailing CR goes only when CRLF normalization ran (Convert-CrlfBytes
+    # above handles it). The reference's sed runs on the strip-bom-only path
+    # too, but there the input reached that path precisely because it has no
+    # `0D 0A` pair, so it cannot end in a CR that terminates a line: a bare CR
+    # there is a lone CR and is preserved (measured against the reference - a
+    # CR at EOF with no LF keeps its byte on both sides).
     return , $src
 }
 

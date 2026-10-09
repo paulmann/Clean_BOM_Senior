@@ -4,9 +4,9 @@
 
 | Suite | What it pins | Runs on | Command |
 |---|---|---|---|
-| `tests/sh/run-tests.sh` | the bash reference, v3 contract (**164 assertions**) | Linux, macOS, WSL, Git Bash | `bash tests/sh/run-tests.sh [-k] [-v] [FILTER]` |
+| `tests/sh/run-tests.sh` | the bash reference, v3 contract (**167 assertions**) | Linux, macOS, WSL, Git Bash | `bash tests/sh/run-tests.sh [-k] [-v] [FILTER]` |
 | `tests/node/run-tests.mjs` | the Node CLI, v3 contract (**161 assertions**) **+ sh↔node differential** | Linux, macOS, **Windows** | `node tests/node/run-tests.mjs [FILTER]` |
-| `tests/ps/run-tests.ps1` | the PowerShell port, v3 contract (**238 assertions**, 64 groups) **+ sh↔ps1 differential** | Linux, macOS, **Windows** (pwsh 7.6+) | `pwsh -File tests/ps/run-tests.ps1 [FILTER]` |
+| `tests/ps/run-tests.ps1` | the PowerShell port, v3 contract (**237 assertions**, 63 groups) **+ sh↔ps1 differential** | Linux, macOS, **Windows** (pwsh 7.6+) | `pwsh -File tests/ps/run-tests.ps1 [FILTER]` |
 | `tests/ps/differential.py` | sh↔ps1 byte parity on 77 scenarios | Linux, macOS (needs bash + pwsh) | `python3 tests/ps/differential.py [CASE ...]` |
 | built-in `--self-test` | the installation on *any* host (10 fixtures) | everywhere | `clean-bom-senior.sh --self-test` / `bom --self-test` / `./clean-bom-senior.ps1 --self-test` |
 | `scripts/gen-ps-help.py --check` | the PowerShell help text is still derived from the reference | everywhere (python3) | `python3 scripts/gen-ps-help.py --check` |
@@ -100,20 +100,58 @@ the original never had to. Two answers disagreed with the documentation:
    byte pair and NUL bytes are handled), pinned by a named regression test in
    both the bash and the Node suite.
    *Cost, stated plainly:* the exact scan is `od | tr | awk` and is only run on
-   files that contain a CR byte at all (a `grep -q` pre-filter rejects the rest
-   in milliseconds). Measured on a 6 MB LF-only PHP file: 1.7 s before, 1.7 s
+   files that contain a CR byte at all (a pre-filter rejects the rest in
+   milliseconds). Measured on a 6 MB LF-only PHP file: 1.7 s before, 1.7 s
    after. A 6 MB file that *does* contain CRs costs ~1.9 s instead of ~0.01 s.
    The PowerShell port is unaffected — it scans the byte array directly and
    measures 0.7 s on the same file.
+   *The pre-filter itself was a defect on Git Bash* (found by running the
+   suite, not by reading the code): `grep` is text-mode under MSYS and strips
+   CR bytes before matching, so the reject branch fired for files full of CRLF
+   and the reference never normalised anything on that platform (`--self-test`
+   4 of 10). The same file measures `grep -c <CR>` = 0, `grep -U` = 2,
+   `tr -dc <CR> | wc -c` = 2. It now counts bytes with `tr`, which is also the
+   portable form: `grep -U` is GNU-only and this file must run on macOS.
 
 2. **The compatibility matrix in `--help` still described the ports as legacy.**
    Now generated from one place for sh and ps1, and updated by hand in
    `bin/bom.js` (which has always shipped its own wording for that topic).
 
+## Three defects the three-way differential found, and why one masked the next
+
+With CRLF detection working on every platform, the sh↔node and sh↔ps1
+comparisons became meaningful for the first time on Git Bash, and two more
+defects came out — both of them cases where a *single* byte pattern was the
+whole difference:
+
+1. **A run of CRs before the LF (`x CR CR LF`) was handled once, not to
+   exhaustion.** The rule was written for one CR per line, so `CR CR LF` came
+   back as `CR LF` — still a CRLF — and the post-write verification rejected the
+   tool's own output. The reference wrote the bad bytes out; `bin/bom.js` and the
+   PowerShell port logged `Verification failed after cleaning` and refused to
+   write at all. The Node suite's own fixture `f8.xml` had carried exactly this
+   pattern from the start; it proved nothing while the reference refused to
+   normalise CRLF under Git Bash, which is the point worth remembering: **a
+   fixture only tests what the implementations actually reach.**
+2. **`tests/ps/differential.py` could not run on Windows at all.** It executed
+   the `.sh` reference directly, which fails with `OSError: [WinError 193] %1 is
+   not a valid Win32 application`, and it ended as an unhandled traceback in a
+   CI matrix that includes `windows-latest`. It now hands the reference to bash,
+   skips cleanly when bash is absent, and passes `MSYS=noglob` to its bash
+   child.
+
+That last detail was itself a defect of the harness and is worth stating
+plainly, because it looked exactly like a bug in the tool: when Python (a
+non-MSYS program) launches bash, the MSYS runtime **globs the arguments** it
+passes on, so `--exclude '*/nested/*'` reached the reference pre-expanded into
+`src/nested/c.js`. The reference then dutifully excluded that one file and the
+two "identical" runs had in fact been asked for different things. Traced as
+`EXCLUDE_PATTERNS=$'src/nested/c.js\n'`. Nothing in the tool was wrong.
+
 ## PowerShell suite: two invocation traps worth knowing
 
 `tests/ps/run-tests.ps1` invokes the tool **in-process**, because spawning
-`pwsh` costs about a second and 64 groups would take minutes. Two things then
+`pwsh` costs about a second and 63 groups would take minutes. Two things then
 matter, and both cost real debugging time:
 
 - **Splatting.** `& $script a,b` and `& $script @(a,b)` both hand the script a

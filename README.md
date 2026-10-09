@@ -314,9 +314,9 @@ it is dirt — and tells you which decision it made, per file.
 ## Development & testing
 
 ```bash
-bash tests/sh/run-tests.sh -v    # reference suite (164 assertions)
+bash tests/sh/run-tests.sh -v    # reference suite (167 assertions)
 node tests/node/run-tests.mjs    # Node suite (161 assertions) + sh↔node differential
-pwsh -File tests/ps/run-tests.ps1 # PowerShell suite (238 assertions) + sh↔ps1 differential
+pwsh -File tests/ps/run-tests.ps1 # PowerShell suite (237 assertions) + sh↔ps1 differential
 python3 tests/ps/differential.py # sh ↔ ps1 byte parity, 77 scenarios
 bom --self-test                  # built-in acceptance, any host
 ./clean-bom-senior.ps1 --self-test

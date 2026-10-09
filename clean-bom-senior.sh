@@ -459,16 +459,31 @@ classify_bom() {
 #   what removed both of v2's failure modes.
 has_crlf() {
 	local f="$1" carry
-	# Fast reject: no CR byte anywhere means no CRLF pair. grep -q is
-	# byte-oriented and exits on the first match, so this is exact for the
-	# negative answer and cheap. It cannot be used for the POSITIVE answer,
-	# because grep works on LF-delimited lines and therefore cannot tell a CR
-	# that is immediately followed by LF from a CR that merely ends a line -
-	# which is exactly the ambiguity that made the previous line-based probe
-	# report UTF-16LE `0D 00 0A` as a CRLF.
-	if ! grep -q -- "${CR_BYTE}" "$f" 2>/dev/null; then
-		return 1
-	fi
+	# Fast reject: no CR byte anywhere means no CRLF pair. This is exact for
+	# the negative answer and cheap, because tr exits after a fixed number of
+	# output lines.
+	#
+	# It must NOT be written with grep: grep works on LF-delimited lines and
+	# therefore cannot tell a CR immediately followed by LF from a CR that
+	# merely ends a line - which is exactly the ambiguity that made the
+	# previous line-based probe report UTF-16LE `0D 00 0A` as a CRLF. On top of
+	# that, grep is text-mode by default: under MSYS/Git Bash it strips CR bytes
+	# before matching, so `grep -c <CR>` reports 0 for a file full of CRLF
+	# (measured on Git Bash 5.3.15: grep 0, grep -U 2, tr -dc <CR> | wc -c 2)
+	# and the reject branch swallowed every CRLF file. `grep -U` would fix it
+	# on GNU but is not portable to BSD grep, and this file must run on macOS.
+	# tr -dc deletes everything that is not a CR, so it is byte-oriented by
+	# construction, and the count is the number of CR bytes in the file.
+	# `head -c 1` bounds the command substitution on large files; on a file
+	# with no CR at all tr reads to EOF and writes nothing, which is the cheap
+	# answer, and no SIGPIPE arm is reachable (head reads its single byte).
+	# `wc -c` reads its input to EOF and the counted digits below are parsed as
+	# text, so the producer is never killed by SIGPIPE and no early-exiting
+	# consumer (the `cmd | head` trap noted in do_update) is involved.
+	case "$(tr -dc "${CR_BYTE}" <"$f" 2>/dev/null | wc -c)" in
+		*[1-9]*) : ;;
+		*) return 1 ;;
+	esac
 	carry=""
 	# Byte-exact answer: od renders the file as byte-aligned hex, so "0d0a" in
 	# that stream IS the byte pair, NUL bytes included. tr collapses od's
@@ -842,16 +857,59 @@ json_report() {
 
 # Build cleaned content into $2 from $1 according to the P_* plan.
 build_clean_content() {
-	local src="$1" dst="$2"
-	if [ "$P_STRIP_BOM" -eq 1 ] && [ "$P_FIX_CRLF" -eq 1 ]; then
-		tail -c +4 -- "$src" | sed "s/${CR_BYTE}\$//" >"$dst"
-	elif [ "$P_STRIP_BOM" -eq 1 ]; then
+	local src="$1" dst="$2" skip=0 line ended_with_lf first
+	if [ "$P_STRIP_BOM" -eq 1 ]; then
+		skip=3
+	fi
+	if [ "$P_FIX_CRLF" -eq 1 ]; then
+		# Delete every CR that terminates a line, and a CR at EOF.
+		# A RUN of CRs before the LF collapses to that one LF, so the output
+		# contains no CR immediately before a LF. The sed form used before
+		# this (`s/CR$//`, one CR per line) was NOT idempotent on such a run:
+		# `CR CR LF` came back as `CR LF`, which the post-write verification
+		# then rejected - the tool threw away a file it should have cleaned.
+		# Measured on all three implementations before the fix: sh wrote the
+		# bad bytes, node and the PowerShell port refused to write at all
+		# ("Verification failed after cleaning"). Collapsing the whole run is
+		# also what makes a second run a no-op, so the summary's "CRLF fixed:
+		# 0" stays honest for a tree this tool has already processed.
+		#
+		# Stripping happens ONE CR per iteration through a glob, never through
+		# a character class: CR is not whitespace to a `${line%% }`-style trim,
+		# and BSD sed (macOS) has no `\r`, which is why this is not sed.
+		# Reading line by line means the last line arrives without its LF, so
+		# the EOF CR is handled by the very same rule - the documented sed
+		# `s/\r$//` semantics, applied uniformly. The line separators are
+		# re-emitted explicitly and a final LF is added only when the source
+		# had one, because contract 7.1 forbids adding or removing a trailing
+		# newline (a `printf '%s\n'` per line would silently append one).
+		ended_with_lf=0
+		if [ "$(tail -c 1 -- "$src" 2>/dev/null | od -An -v -tx1 | tr -d ' \n')" = "0a" ]; then
+			ended_with_lf=1
+		fi
+		first=1
+		while IFS= read -r line || [ -n "$line" ]; do
+			while :; do
+				case "$line" in
+					*"${CR_BYTE}") line="${line%"${CR_BYTE}"}" ;;
+					*) break ;;
+				esac
+			done
+			if [ "$first" -eq 1 ]; then
+				printf '%s' "$line"
+				first=0
+			else
+				printf '\n%s' "$line"
+			fi
+		done < <(if [ "$skip" -gt 0 ]; then tail -c +4 -- "$src"; else cat -- "$src"; fi) >"$dst"
+		if [ "$ended_with_lf" -eq 1 ]; then
+			printf '\n' >>"$dst"
+		fi
+	elif [ "$skip" -gt 0 ]; then
 		# Byte-exact copy without the first 3 bytes — no sed involved, so
 		# MSYS/Git-Bash text-mode CR stripping cannot happen (v2 defect:
 		# --no-rn-normalize still normalised CRLF under MSYS).
 		tail -c +4 -- "$src" >"$dst"
-	elif [ "$P_FIX_CRLF" -eq 1 ]; then
-		sed "s/${CR_BYTE}\$//" <"$src" >"$dst"
 	else
 		cp -- "$src" "$dst"
 	fi
@@ -1979,7 +2037,23 @@ do_update() {
 			cleanup "$EXIT_ENV"
 			;;
 	esac
-	if ! printf '%s' "$content" | grep -q "^VERSION=\"${remote}\""; then
+	# The consumer MUST read its input to EOF. `printf ... | grep -q` does not:
+	# grep -q exits on the first match, the producer is still writing, and with
+	# `set -o pipefail` the SIGPIPE on the producer becomes the status of the
+	# whole pipeline - 141, which this `if !` reads as "stamp not found".
+	# Measured on Git Bash 5.3.15 with an 80 631-byte published script against a
+	# 64 KiB pipe buffer: PIPESTATUS was `141 0` (grep matched, printf was
+	# killed), so --update refused to install a perfectly valid release. macOS
+	# pipe buffers are 16 KiB, so this is not limited to MSYS - it is a defect of
+	# this release's own updater, and it stayed invisible in v2 only because that
+	# script was 23 KB, below any of those buffers.
+	# awk reads to EOF, so there is no SIGPIPE; `index() == 1` is the "starts
+	# with" test, and being a literal substring match it does not let the dots
+	# in `${remote}` act as regex wildcards the way `grep '^VERSION="..."'` did.
+	if ! printf '%s' "$content" | awk -v want="VERSION=\"${remote}\"" '
+		index($0, want) == 1 { found = 1 }
+		END { exit !found }
+	'; then
 		log_error "Downloaded content failed verification (version stamp != $remote) — refusing to install"
 		cleanup "$EXIT_ENV"
 	fi

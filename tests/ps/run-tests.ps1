@@ -48,7 +48,15 @@ if (-not (Test-Path $TOOL)) {
 
 $FILTER = if ($args.Count -ge 1) { $args[0] } else { '' }
 $HAVE_BASH = $null -ne (Get-Command bash -ErrorAction SilentlyContinue)
-$HAVE_PYTHON = $null -ne (Get-Command python3 -ErrorAction SilentlyContinue)
+# `python3` is what the POSIX hosts provide; Windows installs it as `python` (the
+# Python launcher). Probing only for `python3` made the two repository-consistency
+# tests below report SKIPPED - and therefore green - on every Windows run,
+# including a CI runner where Python IS installed: a gate that silently checks
+# nothing is worse than no gate.
+$PYTHON = Get-Command python3 -ErrorAction SilentlyContinue
+if (-not $PYTHON) { $PYTHON = Get-Command python -ErrorAction SilentlyContinue }
+$HAVE_PYTHON = $null -ne $PYTHON
+$PYTHON_EXE = if ($PYTHON) { $PYTHON.Source } else { '' }
 $HAVE_GIT = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 $IS_UNIX = -not $IsWindows
 
@@ -193,6 +201,8 @@ function Add-Test { param([string]$Name, [scriptblock]$Body) $script:TESTS.Add([
 
 $BOM = 'efbbbf'
 $CRLF = '0d0a'
+$CR = '0d'
+$LF = '0a'
 
 #==============================================================================
 # 1. Core cleaning
@@ -300,11 +310,19 @@ Add-Test 'core: lone CRs and EOF CR semantics' {
     Write-Fixture 'l.php' "61${CRLF}620d63${CRLF}"
     $null = Invoke-Tool @('--quiet', 'l.php')
     Assert-Bytes 'l.php' '610a620d630a' 'lone CR mid-line preserved, CRLFs normalised'
-    # a file whose only CR is at EOF but which is rewritten for its BOM loses
-    # that CR too: the documented v2 `sed s/\r$//` semantics
+    # a file whose only CR is at EOF but which is rewritten for its BOM keeps
+    # that CR: the reference rewrites such a file with a plain byte copy (it
+    # has no `0D 0A` pair, so no CRLF step runs and no sed either), and this
+    # port agrees byte for byte. Verified against the reference, not assumed.
     Write-Fixture 'm.php' "${BOM}780d"
     $null = Invoke-Tool @('--quiet', 'm.php')
-    Assert-Bytes 'm.php' '78' 'EOF CR dropped when the file is rewritten anyway'
+    Assert-Bytes 'm.php' '780d' 'BOM removed, lone CR at EOF preserved'
+    # a RUN of CRs before the LF collapses to that one LF: the single-CR rule
+    # used here before was not idempotent on a run, and the port refused to
+    # write the file at all ("Verification failed after cleaning")
+    Write-Fixture 'run.php' "78${CR}${CR}${LF}79${LF}"
+    $null = Invoke-Tool @('--quiet', 'run.php')
+    Assert-Bytes 'run.php' '780a790a' 'a run of CRs before the LF collapses to one LF'
 }
 
 #==============================================================================
@@ -1002,6 +1020,13 @@ Add-Test 'cli: special filenames' {
 
 Add-Test 'cli: JSON escapes' {
     New-Ws
+    # Windows forbids a double quote in a file name, so the fixture cannot exist
+    # there and the assertion below would pass against an empty tree. Report the
+    # limitation instead of a green that proves nothing.
+    if ($IsWindows) {
+        Write-Ok 'JSON escapes a quote in a filename: SKIPPED (Windows cannot create such a name)'
+        return
+    }
     Write-Fixture 'we"ird.php' "${BOM}78${CRLF}"
     Write-Fixture 'back\slash.php' "${BOM}78${CRLF}"
     $null = Invoke-Tool @('--json', '--check', '.')
@@ -1235,19 +1260,25 @@ Add-Test 'repo: the generated help is in sync with the reference' {
     New-Ws
     $gen = Join-Path $REPO_ROOT 'scripts/gen-ps-help.py'
     if (-not (Test-Path $gen)) { Write-Ok 'help generator: SKIPPED (not present)'; return }
-    if (-not $HAVE_PYTHON) { Write-Ok 'help generator: SKIPPED (no python3)'; return }
+    if (-not $HAVE_PYTHON) { Write-Ok 'help generator: SKIPPED (no python)'; return }
     if (-not (Test-Path $SH_TOOL)) { Write-Ok 'help generator: SKIPPED (no shell reference)'; return }
-    $r = & python3 $gen --check 2>&1 | Out-String
+    $r = & $PYTHON_EXE $gen --check 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) { Write-Ok 'the help topics match the shell reference' }
     else { Write-Bad 'the help topics match the shell reference' $r.Trim() }
 }
 
 Add-Test 'repo: differential sh vs ps1 on shared fixtures' {
     New-Ws
-    if (-not $HAVE_PYTHON) { Write-Ok 'differential: SKIPPED (no python3)'; return }
+    if (-not $HAVE_PYTHON) { Write-Ok 'differential: SKIPPED (no python)'; return }
     if (-not (Test-Path $DIFF_PY)) { Write-Ok 'differential: SKIPPED (harness missing)'; return }
     if (-not ($HAVE_BASH -and (Test-Path $SH_TOOL))) { Write-Ok 'differential: SKIPPED (no shell reference)'; return }
-    $out = & python3 $DIFF_PY 2>&1 | Out-String
+    # This test runs the WHOLE 77-scenario harness, which takes minutes on a
+    # Windows host - far longer than any single assertion here. It is kept at the
+    # end of the suite so that a caller can bound it with `CLEANBOM_SKIP_DIFF=1`
+    # (reported as a skip, never as a pass) and run the rest of the suite in
+    # seconds while the harness is exercised separately.
+    if ($env:CLEANBOM_SKIP_DIFF -eq '1') { Write-Ok 'differential: SKIPPED (CLEANBOM_SKIP_DIFF=1)'; return }
+    $out = & $PYTHON_EXE $DIFF_PY 2>&1 | Out-String
     $code = $LASTEXITCODE
     $tail = ($out -split "`n" | Where-Object { $_ -match 'identical' }) -join ' '
     if ($code -eq 0) { Write-Ok "differential: $($tail.Trim())" }

@@ -55,7 +55,7 @@ clean-bom-senior.sh [OPTIONS] [PATH...]
 | `--log-file FILE` | Append plain-text log |
 | `--ext LIST` | Replace the default extension set (comma/space separated, dots tolerated, case-insensitive) |
 | `--add-ext LIST` | Extend the default set |
-| `--exclude GLOB` | Repeatable; matched against the displayed relative path with and without the leading `./`; supports `*`, `?`, `[...]` |
+| `--exclude GLOB` | Repeatable; matched against the displayed relative path with and without the leading `./`; supports `*`, `?`, `[...]`. **Quote it in a shell** (`--exclude 'dist/*'`): unquoted, the shell expands the glob before the tool sees it. When invoking the tool from a non-MSYS program under Git Bash, pass `MSYS=noglob` in the child environment for the same reason — see `tests/ps/differential.py`. |
 | `--exclude-dir NAME` | Repeatable; prune any directory component named NAME |
 | `--no-default-excludes` | Lift the defaults `.git .svn .hg node_modules` (explicit `--exclude-dir`s survive) |
 | `--max-size SPEC` | Per-file cap; `512K`, `10M`, `1G`, `B`, or a byte count; default `100M` |
@@ -158,12 +158,21 @@ Clean files are counted in `summary.clean` but **not listed** in `files`
 ## 7. Byte semantics (normative)
 
 1. **BOM removal** = delete bytes `EF BB BF` iff they are bytes 0–2. Nothing
-   else changes; no trailing newline is ever added or removed by this step.
-2. **CRLF normalisation** = delete every `CR` that is immediately followed by
-   `LF`; additionally delete a `CR` as the final byte of the file **iff** the
-   file is being rewritten anyway (documented v2 `sed s/\r$//` semantics).
-   Lone CRs mid-line are preserved. Files with no real CRLF are never
-   rewritten.
+   else changes; no trailing newline is ever added or removed by this step. A CR
+   at EOF is therefore **kept** on this path: a file reaches it precisely because
+   it has no `0D 0A` pair, so that CR is a lone CR, not a line end. (The CRLF
+   step below is the only one that removes a byte at EOF.)
+2. **CRLF normalisation** = delete **every** `CR` that is immediately followed by
+   `LF`, plus a run of CRs before a LF, and a `CR` as the final byte of the file
+   **iff** the file is being rewritten anyway (documented v2 `sed s/\r$//`
+   semantics). At most one `LF` is emitted for a line, so a run of CRs collapses
+   to the LF it terminated: `x CR CR LF` becomes `x LF`, not `x LF CR LF`. Lone
+   CRs mid-line are preserved, and a CR at EOF with no LF after it is not a CRLF
+   and never flags a file. Files with no real CRLF are never rewritten.
+   Rationale for collapsing the run: the single-CR rule is not idempotent, so
+   `CR CR LF` came back as `CR LF` and the tool's own post-write verification
+   rejected the result — it reported an error and left a valid file untouched
+   (measured on all three implementations before this was pinned by tests).
 3. **Order** for both actions: BOM first, then CRLF (equivalently: one pass
    producing identical bytes).
 4. **Hard refusals** (no write under any flag): UTF-16/32 BOM detected;

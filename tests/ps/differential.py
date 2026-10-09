@@ -251,13 +251,57 @@ def walk_files(d):
     return out
 
 
-def run_tool(cmd, cwd):
+def run_tool(cmd, cwd, env=None):
     proc = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
+                          stderr=subprocess.PIPE, env=env)
     return (proc.returncode,
             proc.stdout.decode('utf-8', 'replace'),
             proc.stderr.decode('utf-8', 'replace'))
 
+
+def posix_args_env():
+    """Environment for the bash child that keeps our arguments literal.
+
+    The MSYS2 runtime GLOBS the arguments of a program it launches when the
+    parent is not an MSYS program. Launched from Python, a quoted `--exclude
+    '*/nested/*'` therefore reaches the reference pre-expanded against the
+    fixture tree - traced: `EXCLUDE_PATTERNS=$'src/nested/c.js\\n'`, so the run
+    compared two implementations that had been asked for different things and
+    the sh side lost the exclusion. `MSYS=noglob` turns that off; the tool is
+    unaffected because a pattern typed in a shell is quoted by the shell itself.
+    """
+    if os.name != 'nt':
+        return None
+    env = dict(os.environ)
+    env['MSYS'] = 'noglob'
+    return env
+
+
+def find_bash():
+    """The shell that will run the reference.
+
+    On POSIX the reference is executable and runs as-is. On Windows it is a
+    shell script, so it has to be handed to bash - running it directly fails
+    with `OSError: [WinError 193] %1 is not a valid Win32 application`, which is
+    how this harness used to abort on the very platform the CI matrix runs it
+    on (the run ended as an unhandled exception, not as a skip and not as a
+    result). Git for Windows ships bash at the locations below; when none of
+    them exists the run is reported as a skip, never as a pass.
+    """
+    if os.name != 'nt':
+        return ['bash']
+    for cand in (r'C:\Program Files\Git\bin\bash.exe',
+                 r'C:\Program Files\Git\usr\bin\bash.exe',
+                 r'C:\Program Files (x86)\Git\bin\bash.exe'):
+        if os.path.exists(cand):
+            return [cand]
+    found = shutil.which('bash.exe') or shutil.which('bash')
+    return [found] if found else None
+
+
+def command_line(sh_cmd, sh_path, ps_path, args):
+    """cmd that runs the reference with the given arguments."""
+    return sh_cmd + [sh_path] + list(args)
 
 def unified(a, b, context=2, limit=24):
     out = []
@@ -273,7 +317,10 @@ def run_case(name, args, sh_cmd, ps_cmd, keep=False):
     make_tree(sh_dir)
     make_tree(ps_dir)
 
-    sh_rc, sh_out, sh_err = run_tool(sh_cmd + args, sh_dir)
+    sh_rc, sh_out, sh_err = run_tool(sh_cmd + args, sh_dir, posix_args_env())
+    if os.environ.get('DIFF_TRACE'):
+        sys.stderr.write('TRACE cwd=%s\nTRACE cmd=%r\n' % (sh_dir, sh_cmd + args))
+        sys.stderr.write('TRACE rc=%s err=%r\n' % (sh_rc, sh_err[-400:]))
     ps_rc, ps_out, ps_err = run_tool(ps_cmd + args, ps_dir)
 
     problems = []
@@ -335,12 +382,24 @@ def main():
     if shutil.which('pwsh') is None:
         sys.stderr.write('SKIP: pwsh (PowerShell 7.6+) is not installed\n')
         return 0
-    if not os.access(SH, os.X_OK):
-        sys.stderr.write('SKIP: the shell reference is not executable '
-                         '(Git Bash on Windows)\n')
-        return 0
 
-    sh_cmd = [SH]
+    # The reference is a POSIX shell script: run it if the host can execute it
+    # directly, otherwise hand it to bash (Windows). Without this the harness
+    # died with WinError 193 on Windows instead of reporting anything.
+    # The check is on the platform, not on os.access: on Windows X_OK only means
+    # "the path exists", so asking for it would hand a .sh file straight to
+    # CreateProcess (measured: os.access(..., os.X_OK) is True on Windows and
+    # the run then aborts with WinError 193).
+    if os.name != 'nt' and os.access(SH, os.X_OK):
+        sh_cmd = [SH]
+    else:
+        bash = find_bash()
+        if bash is None:
+            sys.stderr.write('SKIP: the shell reference is not executable and '
+                             'bash was not found (Git Bash on Windows)\n')
+            return 0
+        sh_cmd = bash + [SH]
+
     ps_cmd = ['pwsh', '-NoLogo', '-NoProfile', '-File', PS]
 
     os.makedirs(WORK, exist_ok=True)
