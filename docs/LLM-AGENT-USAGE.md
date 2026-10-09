@@ -101,8 +101,13 @@ POSIX:
 
 ```bash
 head -c 3 '<file>' | od -An -tx1 | tr -d ' \n'   # must not be efbbbf
-grep -c $'\r' '<file>'                           # must be 0
+tr -dc '\r' < '<file>' | wc -c                   # must be 0
 ```
+
+`grep -c '\r'` looks right and is wrong on GNU grep: `\r` is not a CR in a BRE, the
+pattern degenerates to the letter `r`, and a clean file reports a non-zero count (measured
+1 on GNU 3.11/Debian). `tr -dc '\r' | wc -c` is truthful on both GNU and BSD; with grep the
+pattern must carry a real CR byte, `grep -c "$(printf '\r')"`.
 
 Exit codes: `0` success · `1` per-file errors or `--strict` findings · `2` usage ·
 `3` environment · `4` internal · `10` `--check` found dirt · `11` update available.
