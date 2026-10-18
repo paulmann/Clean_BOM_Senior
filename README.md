@@ -347,4 +347,4 @@ See [`docs/TESTING.md`](docs/TESTING.md).
 
 ## License
 
-[MIT](LICENSE) © Mikhail Deynekin — [deynekin.com](https://deynekin.com)
+[PolyForm Noncommercial 1.0.0](LICENSE) © Mikhail Deynekin — [deynekin.com](https://deynekin.com)
