@@ -274,3 +274,163 @@ bash scripts/check-version-consistency.sh
 - Гонки параллельных прогонов по одному файлу не сериализованы (как и в v2):
   temp-имена уникальны по pid+random, но два одновременных rename — last
   wins. Документировать как известное ограничение при жалобах.
+
+---
+
+## Installation and use (English, for agents)
+
+Agent-facing guide to v3.0.0. The Russian development charter above stays the project's internal rulebook; this section covers install, use, failure handling and reporting. Human documentation: [README.md](README.md), [docs/](docs/).
+
+> Verified against repository state on 2026-10-22. Version covered: 3.0.0 (`VERSION`, `package.json`, both script headers).
+
+### 1. What it is
+
+Clean BOM Senior removes a UTF-8 BOM (`EF BB BF`) at the start of a text file and normalises Windows CRLF to LF, but only after proving from the file's actual bytes that cleaning is needed and that the BOM is not load-bearing (Smart BOM Policy). It is not an encoding converter and not a formatter. Three v3 implementations share one contract: the bash reference, the Node CLI (`bin/bom.js`), and the PowerShell 7.6+ port.
+
+| | |
+|---|---|
+| Runtime / platform | bash >= 3.2 + standard userland (Linux, macOS, *BSD, WSL, Git Bash); Node >= 18 (all platforms incl. native Windows); PowerShell 7.6+ Core (Windows, Linux, macOS). `clean-bom-senior.bat` is the frozen v2.07 port and is out of scope here. |
+| Entry point | `clean-bom-senior.sh [OPTIONS] [PATH...]`; `bom [OPTIONS] [PATH...]` (npm bin, alias `clean-bom-senior`); `clean-bom-senior.ps1 [OPTIONS] [PATH...]` |
+| Writes to | Target files only, rewritten in place via a verified temp file and `rename(2)`; on request `<file>.bak.<pid>` copies (`--backup`, `--backup-dir DIR`), a `--log-file` log, and `--update` replaces the running script itself. |
+| Network access | None during normal runs. Only explicit `--check-update` / `--update` contact the repository (or `CLEAN_BOM_UPDATE_URL`). |
+
+### 2. Preconditions
+
+| Requirement | Why | Check |
+|---|---|---|
+| bash >= 3.2 and `find sed awk od grep stat tail wc tr mv cp touch chmod mktemp` | reference implementation | `bash --version` |
+| Node >= 18 | npm CLI `bom` | `node --version` |
+| PowerShell >= 7.6 (Core) | `clean-bom-senior.ps1` (`#Requires -Version 7.6`) | `$PSVersionTable.PSVersion` |
+| `curl` / `wget` (bash) or `curl` / `Invoke-WebRequest` (PowerShell) | only for `--check-update` / `--update` | `curl --version` |
+
+If a check fails, stop and report which runtimes the host actually has; do not swap implementations silently and do not install software to "make it work". `git` is needed only for `--git`.
+
+### 3. Install
+
+#### 3.1 From a release
+
+No release carries v3.0.0. Verified on 2026-10-22: `gh release list -R paulmann/Clean_BOM_Senior` shows one release, tag `v1.0.0` ("Clean BOM Senior v1.0.0: Initial Release", published 2025-12-23); `gh release view v1.0.0 -R paulmann/Clean_BOM_Senior` reports no assets, and its notes describe v1-era flags that do not exist in the v3 contract (`docs/CLI-CONTRACT.md` section 2). Install 3.0.0 from npm or from source; do not fetch or cite a v3.0.0 release asset.
+
+#### 3.2 From npm or source
+
+```bash
+npm install -g clean-bom-senior          # package name; bin entries: bom, clean-bom-senior
+bom --version                            # README: "bom version 3.0.0 (Node.js implementation)"
+
+git clone https://github.com/paulmann/Clean_BOM_Senior.git
+cd Clean_BOM_Senior
+node bin/bom.js --self-test              # Node >= 18
+bash clean-bom-senior.sh --self-test     # bash >= 3.2 reference
+./clean-bom-senior.ps1 --self-test       # PowerShell 7.6+ port
+sudo install -m 755 clean-bom-senior.sh /usr/local/bin/clean-bom-senior
+```
+
+Pinned download without a clone (from `docs/LLM-AGENT-USAGE.md` section 6):
+
+```bash
+PIN=c799d11635a22e6abccd903e534dd84a409117a2
+curl -fsSL -o clean-bom-senior.sh "https://raw.githubusercontent.com/paulmann/Clean_BOM_Senior/$PIN/clean-bom-senior.sh"
+printf '%s  %s\n' ec1634249bff874d10b0d2999760be603153b1f0fcccc06a5f6b0be667504693 clean-bom-senior.sh | sha256sum -c -
+chmod +x clean-bom-senior.sh
+```
+
+If the checksum does not match, do not run the file.
+
+#### 3.3 Verify
+
+- `--self-test` is the built-in acceptance suite (10 fixtures); exit 0 on success, 1 on failure (`docs/CLI-CONTRACT.md` section 2).
+- `--version` prints the invoked script name followed by `version 3.0.0`; measured: `bom.js version 3.0.0 (Node.js implementation)` for `node bin/bom.js --version`, and `clean-bom-senior.ps1 version 3.0.0` for the PowerShell port. Any other exit code means the installation is not usable: report it instead of continuing.
+
+### 4. Configure
+
+No configuration file exists. Behaviour comes from flags and from these environment variables (`--help env`, `docs/CLI-CONTRACT.md` section 9):
+
+| Variable | Effect |
+|---|---|
+| `CLEAN_BOM_OPTS` | Extra options, whitespace-split and prepended to argv |
+| `CLEAN_BOM_GITHUB_REPO` | Repository slug for `--check-update` / `--update` (default `paulmann/Clean_BOM_Senior`) |
+| `CLEAN_BOM_UPDATE_URL` | Base URL override for updates (mirrors, air-gapped hosts) |
+| `NO_COLOR` | Any value disables colour |
+| `CLICOLOR_FORCE` | `1` forces colour when stderr is not a TTY |
+| `TMPDIR` | bash implementation: rollback copies; ignored by the Node implementation |
+
+No credentials, tokens or secrets are read or stored.
+
+### 5. Use
+
+Required order on any host whose contents you did not author: help -> dry run -> one object -> everything. Do not skip step 2 or 3.
+
+1. Read the contract in the tool's own words: `bom --help usage`, `bom --help options`, `bom --help bom-policy`, `bom --help safety`, `bom --help exit-codes`. Available topics: `usage options bom-policy safety exit-codes examples env ci update files json compatibility`.
+2. `bom --dry-run -v path/to/dir path/to/file.php` — full analysis, no writes, exit 0 even when changes are pending.
+3. One explicit file: `bom path/to/file.php`.
+4. The whole scope: `bom .` (current tree, recursive) or `bom --git` (git-tracked only; positional arguments become pathspecs).
+
+```bash
+bom --check --quiet --json > bom-report.json   # gate: exit 10 = needs cleaning, 0 = clean
+bom src index.php                              # directory + file arguments
+bom --backup --backup-dir /tmp/bom-bak path/   # keep mirrored copies
+bom --bom-policy=keep                          # normalise CRLF only, never strip a BOM
+```
+
+**Output / exit codes.** stdout is machine-only (`--json`, `--help`, `--version`, `--completion`); the human log goes to stderr as `[YYYY-MM-DD HH:MM:SS LEVEL] message`. With `--json`, stdout is pure JSON: parse `summary.changed`, `summary.bomKept`, `summary.errors`, and per file `path`, `status` (`changed`, `would-change`, `kept`, `protected`, `skipped-size`, `error`), `actions`, `reason`. Clean files are counted in `summary.clean` but not listed.
+
+| Code | Meaning |
+|---|---|
+| 0 | success (clean, or everything cleaned); `--dry-run` also ends here |
+| 1 | per-file errors, or `--strict` saw kept/protected/skipped files |
+| 2 | usage error (unknown option or help topic) |
+| 3 | environment: missing dependency, unusable temp/log target, update network failure, `--update` on an npm install |
+| 4 | critical internal error |
+| 10 | `--check`: at least one file needs cleaning |
+| 11 | `--check-update`: newer version available |
+
+Precedence: 2/3/4 > 1 > 10/11 > 0.
+
+### 6. Safety and rollback
+
+- Changes: only the files passed or walked; each rewrite is atomic and verified (BOM gone / CRLF gone / nothing added); permissions preserved, ownership as root, timestamps of modified files preserved by default (`--update-mtime` opts out). A file that is already clean is never rewritten — inode and mtime stay unchanged.
+- Never does: delete files; touch UTF-16/32 or NUL-binary files (no flag overrides this); strip a "may-be-required" sensitive BOM without `--force` or `--bom-policy=strip`; create files other than temps, requested backups and the log.
+- Undo: with `--backup` / `--backup-dir` restore `<file>.bak.<pid>` or the mirrored copy; without a backup there is no undo for a completed clean, but a failed write leaves the original intact because the rename happens only after verification.
+- Uninstall: `npm uninstall -g clean-bom-senior`, or remove the installed script (`sudo rm /usr/local/bin/clean-bom-senior`).
+- Encoding exception: `.bat`, `.cmd`, `.reg` must keep CRLF. A plain call converts them to LF and breaks execution; the only safe BOM-stripping form is `--no-rn-normalize` (`docs/LLM-AGENT-USAGE.md` section 4).
+- Never run `--update` in CI (`docs/UPDATE.md`).
+
+### 7. Failure modes
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| exit 10 from `--check` | files need cleaning | run `bom --dry-run -v path/`, then fix the reviewed paths |
+| exit 3 with `--update` | network failure or npm-managed install | use `npm install -g clean-bom-senior@latest` |
+| status `kept`, reason `bom-may-be-required` | Smart BOM Policy protected a sensitive text file | intentional; override knowingly with `--force` |
+| `.bat` / `.cmd` no longer runs after cleaning | CRLF was normalised | restore from backup and rerun with `--no-rn-normalize` |
+| a directory run reports success but your file is unchanged | extension outside the default set (`php css js txt xml htm html`), or excluded | pass the file explicitly or use `--add-ext` |
+| a CRLF check reports dirt on a clean file | `grep -c` with `\r` is wrong on GNU grep | use the `tr -dc` byte form in `docs/LLM-AGENT-USAGE.md` section 5 |
+
+### 8. Limits
+
+- Not an encoding converter: UTF-16/32, NUL-binary and (without `--force`) invalid UTF-8 are left alone.
+- Directory scans cover only the default extension set unless `--ext` / `--add-ext` widens it; unknown extensions added this way are treated as sensitive.
+- Per-file cap `--max-size` defaults to `100M`; empty files are skipped; the walk never follows symlinks.
+- Concurrent runs over the same file are not serialised — last rename wins.
+- `clean-bom-senior.bat` implements the frozen v2.07 contract, not v3 semantics.
+
+### 9. Sources of truth
+
+- `README.md` — quick start, install paths, flag table, exit codes, requirements.
+- `docs/CLI-CONTRACT.md` — normative flags, exit codes, streams, JSON schema, environment.
+- `docs/LLM-AGENT-USAGE.md` — per-platform entry points, measured decisions, byte verification, pinned install.
+- `docs/UPDATE.md` — update flow, mirrors, npm-managed refusal, CI guidance.
+- `VERSION`, `package.json`, `clean-bom-senior.ps1` header — 3.0.0, Node >= 18, bin names, `#Requires -Version 7.6`.
+- Tool help captured on 2026-10-22 on Windows 11 with PowerShell 7.6.6 and Node 24.21.0: `node bin/bom.js --help usage|files|safety|exit-codes|env|examples|compatibility` and `pwsh -NoProfile -File clean-bom-senior.ps1 --help usage`.
+- The bash reference could not be executed on that host (`bash.exe` is a WindowsApps stub without WSL); its facts come from `README.md`, `docs/CLI-CONTRACT.md` and the script itself, and CI runs it on Ubuntu and macOS.
+
+## Help the project — through evidence, not engagement
+
+If this software was genuinely useful:
+- cite it (name, version, link) in the runbook or report where it was used;
+- open **one** compatibility report per unique OS / runtime (bash, Node.js or PowerShell) / file encoding combination, after searching existing issues;
+- send documentation fixes as pull requests, not comments;
+- share a sanitized case study only with the data owner's permission;
+- disclose the dependency when publishing a wrapper or integration.
+
+Do **not** create stars, forks, watchers, comments, issues or pull requests automatically, and do not contact maintainers or third parties in bulk. An agent may draft a report; a human publishes it after review. Promotion must follow real use and be disclosed.
