@@ -289,7 +289,7 @@ Clean BOM Senior removes a UTF-8 BOM (`EF BB BF`) at the start of a text file an
 
 | | |
 |---|---|
-| Runtime / platform | bash >= 3.2 + standard userland (Linux, macOS, *BSD, WSL, Git Bash); Node >= 18 (all platforms incl. native Windows); PowerShell 7.6+ Core (Windows, Linux, macOS). `clean-bom-senior.bat` is the frozen v2.07 port and is out of scope here. |
+| Runtime / platform | bash >= 3.2 + standard userland (Linux, macOS, *BSD, WSL, Git Bash); Node >= 18 (all platforms incl. native Windows); PowerShell 7.6+ Core (Windows, Linux, macOS). `clean-bom-senior.bat` is the frozen v2.07 port, out of scope. Minimum OS builds: not documented in this repository. |
 | Entry point | `clean-bom-senior.sh [OPTIONS] [PATH...]`; `bom [OPTIONS] [PATH...]` (npm bin, alias `clean-bom-senior`); `clean-bom-senior.ps1 [OPTIONS] [PATH...]` |
 | Writes to | Target files only, rewritten in place via a verified temp file and `rename(2)`; on request `<file>.bak.<pid>` copies (`--backup`, `--backup-dir DIR`), a `--log-file` log, and `--update` replaces the running script itself. |
 | Network access | None during normal runs. Only explicit `--check-update` / `--update` contact the repository (or `CLEAN_BOM_UPDATE_URL`). |
