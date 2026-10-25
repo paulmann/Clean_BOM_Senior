@@ -7,6 +7,9 @@
 [![shellcheck](https://img.shields.io/badge/shellcheck-clean-brightgreen.svg)](https://www.shellcheck.net/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
+<!-- md-i18n:switcher -->
+**Read this in:** English · [Deutsch](README.de.md) · [中文](README.zh.md) · [हिन्दी](README.hi.md) · [Español](README.es.md) · [Русский](README.ru.md)
+
 > **Removes invisible UTF-8 BOM and Windows CRLF from source files — and knows
 > when it must not.** Atomic, byte-exact, CI-friendly: a file is rewritten only
 > when cleaning is genuinely needed and genuinely safe, and never when its BOM
