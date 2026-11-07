@@ -75,10 +75,10 @@
 #   2. Permissions transfer through .NET (`FileInfo.UnixFileMode`) on Unix and
 #      through NTFS ACL inheritance on Windows; ownership transfer uses
 #      `chown` and only runs as root (POSIX uid/gid mean nothing on Windows).
-#   3. Hard-link detection shells out (`stat -c %h` on Unix,
-#      `fsutil hardlink list` on Windows) because .NET exposes no portable
-#      link count. When the probe is unavailable the file is assumed to have
-#      one link and is replaced atomically.
+#   3. Hard-link detection shells out (`stat -c %h` on GNU Unix, `stat -f %l` on
+#      macOS/BSD, `fsutil hardlink list` on Windows) because .NET exposes no
+#      portable link count. When the probe is unavailable the file is assumed to
+#      have one link and is replaced atomically.
 #   4. `--update` accepts a self-verifying `.ps1` (a `#Requires` header plus
 #      the `$script:Version = '<X.Y.Z>'` stamp) where the shell reference
 #      checks a shebang plus `VERSION="<X.Y.Z>"`.
@@ -425,6 +425,24 @@ function Get-FileSizeBytes {
     return [long]0
 }
 
+function Get-StatValue {
+    # GNU and BSD stat spell the same probe differently: `stat -c FMT` (GNU) and
+    # `stat -f FMT` (macOS/BSD), and the format letters differ too (%h vs %l).
+    # Probing `-c` unconditionally made every macOS probe fail, so the port then
+    # assumed one link and replaced a hard-linked file atomically instead of
+    # rewriting it in place through the inode, and the other link kept the old
+    # bytes (macos-latest CI, test-powershell job: "hard links are detected and
+    # reported", "the second link sees the fix"). Probe GNU first, then BSD, the
+    # same way the test suites do; returns $null when both probes failed.
+    param([string]$Path, [string]$GnuFormat, [string]$BsdFormat)
+    $out = & stat -c $GnuFormat -- "$Path" 2>$null
+    if ($LASTEXITCODE -ne 0 -or $null -eq $out) {
+        $out = & stat -f $BsdFormat -- "$Path" 2>$null
+    }
+    if ($LASTEXITCODE -ne 0 -or $null -eq $out) { return $null }
+    return ("$out" -join '').Trim()
+}
+
 function Get-FileLinkCount {
     param([string]$Path)
     try {
@@ -438,10 +456,10 @@ function Get-FileLinkCount {
             return $n
         } else {
             if (-not (Test-Have 'stat')) { return 1 }
-            $out = & stat -c '%h' -- "$Path" 2>$null
-            if ($LASTEXITCODE -ne 0 -or $null -eq $out) { return 1 }
+            $out = Get-StatValue $Path '%h' '%l'
+            if ($null -eq $out) { return 1 }
             $v = 0
-            if ([int]::TryParse("$out".Trim(), [ref]$v) -and $v -ge 1) { return $v }
+            if ([int]::TryParse($out, [ref]$v) -and $v -ge 1) { return $v }
             return 1
         }
     } catch { return 1 }
@@ -457,9 +475,9 @@ function Get-FileInode {
             return ("$out" -join '').Trim()
         } else {
             if (-not (Test-Have 'stat')) { return '' }
-            $out = & stat -c '%i' -- "$Path" 2>$null
-            if ($LASTEXITCODE -ne 0 -or $null -eq $out) { return '' }
-            return ("$out" -join '').Trim()
+            $out = Get-StatValue $Path '%i' '%i'
+            if ($null -eq $out) { return '' }
+            return $out
         }
     } catch { return '' }
 }
@@ -490,9 +508,11 @@ function Get-FileOwnerIds {
     if (Test-IsWindows) { return '' }
     if (-not (Test-Have 'stat')) { return '' }
     try {
-        $out = & stat -c '%u %g' -- "$Path" 2>$null
-        if ($LASTEXITCODE -ne 0 -or $null -eq $out) { return '' }
-        return ("$out" -join '').Trim()
+        # The owner probe uses the same format letters on GNU and BSD stat; only
+        # the flag differs (-c vs -f), which Get-StatValue handles.
+        $out = Get-StatValue $Path '%u %g' '%u %g'
+        if ($null -eq $out) { return '' }
+        return $out
     } catch { return '' }
 }
 
