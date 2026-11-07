@@ -364,7 +364,14 @@ file_attrs() {
 	if [ "$STAT_FLAVOR" = "gnu" ]; then
 		stat -c '%u %g %a' -- "$1" 2>/dev/null
 	else
-		stat -f '%u %g %p' -- "$1" 2>/dev/null
+		# BSD %p is the raw st_mode: it carries the FILE TYPE bits too, so a
+		# 0644 file prints "100644" (S_IFREG | 0644), not "644". Passing that
+		# to chmod() is what made every rewrite on macOS report "Could not set
+		# permissions (100644)" and leave the temp file at the 0600 that
+		# mktemp(1) creates — measured on the macos-26 runners. %Lp is the
+		# permission bits alone (macOS, FreeBSD, and the fallback used by the
+		# test suites), so the two flavours return the same thing.
+		stat -f '%u %g %Lp' -- "$1" 2>/dev/null
 	fi
 }
 
@@ -936,9 +943,13 @@ apply_attrs_to() {
 	attrs="$(file_attrs "$1")" || return 1
 	read -r uid gid mode <<<"$attrs"
 	[ -n "$mode" ] || return 1
-	chmod "$mode" -- "$2" 2>/dev/null || log_warn "Could not set permissions ($mode) on: $2"
+	# `chmod MODE -- FILE` is not portable: BSD chmod (macOS) stops option
+	# parsing at the first operand, so "--" becomes a FILE and the real target
+	# is never changed ("chmod: --: No such file or directory"). Put "--"
+	# before the mode: getopt() then consumes it in both userlands.
+	chmod -- "$mode" "$2" 2>/dev/null || log_warn "Could not set permissions ($mode) on: $2"
 	if [ "$(id -u)" -eq 0 ] && have chown; then
-		chown "$uid:$gid" -- "$2" 2>/dev/null || log_warn "Could not set ownership ($uid:$gid) on: $2"
+		chown -- "$uid:$gid" "$2" 2>/dev/null || log_warn "Could not set ownership ($uid:$gid) on: $2"
 	fi
 	if [ "$KEEP_MTIME" -eq 1 ]; then
 		# Copy atime+mtime from the ORIGINAL onto the temp file BEFORE the
@@ -2064,7 +2075,11 @@ do_update() {
 	fi
 	register_temp "$tmp"
 	printf '%s\n' "$content" >"$tmp"
-	chmod 755 -- "$tmp"
+	# Same BSD/GNU "--" ordering as apply_attrs_to: with "--" after the mode,
+	# macOS chmod tried to chmod a file literally named "--", the failed
+	# command aborted the update under `set -e` (exit 1) and the installed
+	# script was never replaced — the macOS "--update: exit 0" CI failure.
+	chmod -- 755 "$tmp"
 	mv -f -- "$tmp" "$resolved"
 	printf 'Updated %s: %s -> %s (%s)\n' "$SCRIPT_NAME" "$VERSION" "$remote" "$resolved" >&2
 	cleanup "$EXIT_OK"

@@ -167,7 +167,30 @@ function cleanup(code) {
   for (const t of C.tempFiles) {
     try { fs.rmSync(t, { force: true }); } catch { /* best effort */ }
   }
-  process.exit(code);
+  // process.exit() does not flush a pipe. Writes to a non-TTY, non-file fd are
+  // asynchronous, and whatever the kernel has not accepted yet is discarded
+  // (nodejs/node#3669, still open by design). The full --help is about 11.8 KB;
+  // on the macOS runners the Node 18 and 20 jobs received it truncated in the
+  // middle (USAGE and SMART BOM POLICY were present, EXIT CODES was not) while
+  // the Node 22 job happened to get all of it — the output a user sees must not
+  // depend on that. If either stream still holds bytes, exit from their drain
+  // instead of from process.exit().
+  const flushing = [process.stdout, process.stderr]
+    .filter((s) => s.writable && !s.destroyed && s.writableLength > 0);
+  if (flushing.length === 0) {
+    process.exit(code);
+    return;
+  }
+  let left = flushing.length;
+  const finish = () => { if (--left === 0) process.exit(code); };
+  for (const stream of flushing) {
+    let settled = false;
+    const once = () => { if (settled) return; settled = true; finish(); };
+    stream.once('error', once);
+    stream.write('', once);
+  }
+  // A stream that never acknowledges the write must not hang the process.
+  setTimeout(() => process.exit(code), 2000).unref();
 }
 
 function dieUsage(msg) {

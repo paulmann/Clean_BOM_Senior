@@ -194,6 +194,33 @@ function Assert-NotGrep { param([string]$Haystack, [string]$Needle, [string]$Lab
 function Assert-NoFile { param([string]$Path, [string]$Label)
     if (-not (Test-Path $Path)) { Write-Ok $Label } else { Write-Bad $Label "unexpected file: $Path" }
 }
+
+# POSIX metadata helpers. `stat -c` is GNU-only: on macOS it exits with
+# "illegal option -- c", the captures below came back EMPTY, and the suite then
+# reported the port as losing permissions / hard links when in fact it could not
+# read the fixture's metadata at all (measured on the macos-26 runners). BSD stat
+# spells the same probes with -f, and %Lp is the permission bits alone — BSD %p
+# also carries the file-type bits ("100644" for a 0644 file) and is not a valid
+# chmod argument.
+#
+# chmod follows the same trap in reverse: `chmod MODE -- FILE` makes BSD chmod
+# treat "--" as a file. Both userlands accept "--" BEFORE the mode.
+function Get-FileMode { param([string]$Path)
+    if ($IsMacOS) { return (& stat -f '%Lp' -- $Path | Out-String).Trim() }
+    return (& stat -c '%a' -- $Path | Out-String).Trim()
+}
+function Get-FileLinkCount { param([string]$Path)
+    if ($IsMacOS) { return (& stat -f '%l' -- $Path | Out-String).Trim() }
+    return (& stat -c '%h' -- $Path | Out-String).Trim()
+}
+function Get-FileInode { param([string]$Path)
+    if ($IsMacOS) { return (& stat -f '%i' -- $Path | Out-String).Trim() }
+    return (& stat -c '%i' -- $Path | Out-String).Trim()
+}
+function Set-FileMode { param([string]$Mode, [string]$Path)
+    & chmod -- $Mode $Path
+}
+
 function Write-Section { param([string]$Title) [Console]::Out.Write("`n$($color.ylw)== $Title ==$($color.rst)`n") }
 
 $script:TESTS = New-Object System.Collections.Generic.List[object]
@@ -236,7 +263,7 @@ Add-Test 'core: clean file untouched (identity + mtime stable)' {
     Write-Fixture 'd.php' '3c3f7068700a'
     $before = [System.IO.FileInfo]::new((Get-WorkPath 'd.php'))
     $mtime = $before.LastWriteTimeUtc
-    $inode = if ($IS_UNIX) { (& stat -c '%i' -- $before.FullName | Out-String).Trim() } else { '' }
+    $inode = if ($IS_UNIX) { Get-FileInode $before.FullName } else { '' }
     # age the file so a rewrite would be visible in the timestamp
     $before.LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-3)
     $mtime = $before.LastWriteTimeUtc
@@ -246,7 +273,7 @@ Add-Test 'core: clean file untouched (identity + mtime stable)' {
     else { Write-Bad 'clean file: mtime unchanged' "was $mtime now $($after.LastWriteTimeUtc)" }
     if (-not $IS_UNIX) { Write-Ok 'clean file: inode check skipped (Windows)' }
     else {
-        $inode2 = (& stat -c '%i' -- $after.FullName | Out-String).Trim()
+        $inode2 = Get-FileInode $after.FullName
         if ($inode -ceq $inode2) { Write-Ok 'clean file: inode stable (not rewritten)' }
         else { Write-Bad 'clean file: inode stable (not rewritten)' "$inode -> $inode2" }
     }
@@ -515,9 +542,9 @@ if ($IS_UNIX) {
         New-Ws
         Write-Fixture 'p.php' "${BOM}78${CRLF}"
         $p = Get-WorkPath 'p.php'
-        & chmod 640 -- $p
+        Set-FileMode '640' $p
         $null = Invoke-Tool @('--quiet', 'p.php')
-        $mode = (& stat -c '%a' -- $p | Out-String).Trim()
+        $mode = Get-FileMode $p
         if ($mode -ceq '640') { Write-Ok 'permissions transferred to the replacement file' }
         else { Write-Bad 'permissions transferred to the replacement file' "mode is $mode, want 640" }
     }
@@ -528,17 +555,17 @@ if ($IS_UNIX) {
         $p = Get-WorkPath 'h.php'
         $link = Get-WorkPath 'h_link.php'
         & ln -- $p $link                      # ln TARGET LINK, in that order
-        $n0 = (& stat -c '%h' -- $p | Out-String).Trim()
+        $n0 = Get-FileLinkCount $p
         if ($n0 -cne '2') { Write-Bad 'fixture has two hard links' "got nlink=$n0"; return }
         Write-Ok 'fixture has two hard links'
-        $i1 = (& stat -c '%i' -- $p | Out-String).Trim()
+        $i1 = Get-FileInode $p
         $null = Invoke-Tool @('--quiet', 'h.php')
         Assert-Grep (Get-ToolStderr) 'hard links' 'hard links are detected and reported'
         Assert-Bytes 'h_link.php' '780a' 'the second link sees the fix (rewritten through the inode)'
-        $i2 = (& stat -c '%i' -- $p | Out-String).Trim()
+        $i2 = Get-FileInode $p
         if ($i1 -ceq $i2) { Write-Ok 'the inode is preserved (in-place rewrite)' }
         else { Write-Bad 'the inode is preserved (in-place rewrite)' "$i1 -> $i2" }
-        $n = (& stat -c '%h' -- $p | Out-String).Trim()
+        $n = Get-FileLinkCount $p
         if ($n -ceq '2') { Write-Ok 'link count is still 2' } else { Write-Bad 'link count is still 2' "got $n" }
     }
 }
@@ -1123,7 +1150,7 @@ Add-Test 'update: --update replaces the script and preserves the exec bit' {
     $null = New-Item -ItemType Directory -Path $install -Force
     $installed = Join-Path $install 'clean-bom-senior.ps1'
     [System.IO.File]::Copy($TOOL, $installed, $true)
-    if ($IS_UNIX) { & chmod 755 -- $installed }
+    if ($IS_UNIX) { Set-FileMode '755' $installed }
 
     $realOut = [Console]::Out; $realErr = [Console]::Error
     $swOut = [System.IO.StringWriter]::new(); $swErr = [System.IO.StringWriter]::new()
@@ -1144,7 +1171,7 @@ Add-Test 'update: --update replaces the script and preserves the exec bit' {
     if ($txt.Contains("`$script:VERSION = '9.9.9';")) { Write-Ok '--update installed the newer version' }
     else { Write-Bad '--update installed the newer version' 'stamp still 3.0.0' }
     if ($IS_UNIX) {
-        $mode = (& stat -c '%a' -- $installed | Out-String).Trim()
+        $mode = Get-FileMode $installed
         if ($mode.Contains('7')) { Write-Ok '--update preserved the exec bit' }
         else { Write-Bad '--update preserved the exec bit' "mode $mode" }
     } else { Write-Ok '--update exec bit: SKIPPED (Windows)' }
@@ -1250,7 +1277,7 @@ Add-Test 'repo: the port is pure ASCII and directly invocable' {
     Assert-NotGrep $txt '__EMDASH__' 'no placeholder leaks into the output'
 
     if ($IS_UNIX) {
-        $mode = (& stat -c '%a' -- $TOOL | Out-String).Trim()
+        $mode = Get-FileMode $TOOL
         if ($mode.Contains('7') -or $mode.Contains('5')) { Write-Ok 'the port keeps its exec bit for ./clean-bom-senior.ps1' }
         else { Write-Bad 'the port keeps its exec bit for ./clean-bom-senior.ps1' "mode $mode" }
     } else { Write-Ok 'exec bit: SKIPPED (Windows)' }
